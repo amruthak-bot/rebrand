@@ -47,6 +47,16 @@ def main():
             for kind in ("text", "document", "image"):
                 issues, _, _ = server._run_checks({"text": "  ", "content_type": kind}, blueprint, [])
                 assert any(i["rule_code"] == "CONTENT_MISSING" and i["severity"] == "high" for i in issues), kind
+            server.conn.execute("INSERT INTO workspaces (id,name,created_at) VALUES (1,'QA',0)")
+            server.conn.execute("INSERT INTO users (id,workspace_id,name,email,role,pass_hash,created_at) VALUES (1,1,'QA','qa@demo.test','creator','unused',0)")
+            user = {"id": 1, "workspace_id": 1}
+            sid = server.create_submission(server.SubmissionBody(title="Counts", text="Sample"), user)["id"]
+            server._store_issues(sid, issues)
+            assert server.list_submissions(user)[0]["open_issues"] == 1
+            server.conn.execute("UPDATE issues SET status='accepted' WHERE submission_id=?", (sid,))
+            assert server.list_submissions(user)[0]["open_issues"] == 1
+            server.conn.execute("UPDATE issues SET status='resolved' WHERE submission_id=?", (sid,))
+            assert server.list_submissions(user)[0]["open_issues"] == 0
         finally:
             server.conn.close()
     print("PASS: whole terms, independent claims, percentage review, DOCX extraction and missing-content guards")

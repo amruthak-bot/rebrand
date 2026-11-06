@@ -106,7 +106,7 @@ async function loadReview(postId=null){
   for(const s of rows){
     const d=document.createElement('div');
     d.className='border rounded-2xl p-4'; d.style.borderColor='#e5dcc6'; d.style.background='#fff';
-    const open=(await api('/submissions/'+s.id)).issues.filter(i=>i.status==='open').length;
+    const open=s.open_issues;
     d.innerHTML=`<b class="text-lg" style="font-family:Fraunces,Georgia,serif">${safe(s.title)}</b>
       <span class="badge">${safe(s.state)}</span><span class="badge">${safe(s.content_type)}</span>
       <p class="text-xs mt-1" style="color:#5c6b58">${!s.checked_fingerprint&&['Draft','In Review'].includes(s.state)?'Check required before approval':open+' thing(s) still to look at'}</p>

@@ -376,7 +376,9 @@ def _issues_for(sid):
 @app.get("/api/submissions")
 def list_submissions(user=Depends(current_user)):
     rows = conn.execute(
-        "SELECT s.*, u.name AS creator_name FROM submissions s JOIN users u ON u.id=s.creator_id "
+        "SELECT s.*, u.name AS creator_name, "
+        "(SELECT count(*) FROM issues i WHERE i.submission_id=s.id AND i.status!='resolved') AS open_issues "
+        "FROM submissions s JOIN users u ON u.id=s.creator_id "
         "WHERE s.workspace_id=? ORDER BY s.updated_at DESC", (user["workspace_id"],)).fetchall()
     return [dict(r) for r in rows]
 
