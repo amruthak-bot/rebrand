@@ -271,6 +271,14 @@ def _run_checks(sub, blueprint, ws_assets):
     """Run all checks for a submission dict; return (issues, links, ai_note)."""
     text = sub.get("text") or ""
     all_issues, links = [], []
+    if (sub.get("content_type") == "image" and not sub.get("file_path")) or (
+            sub.get("content_type") != "image" and not text.strip()):
+        all_issues.append({
+            "rule_code": "CONTENT_MISSING", "category": "content", "severity": "high",
+            "evidence": "There is no image to check." if sub.get("content_type") == "image" else "There is no text to check.",
+            "clause": "Content must be supplied before it can be checked and approved.",
+            "suggestion": "Upload an image." if sub.get("content_type") == "image" else "Write a post or upload a document containing text.",
+        })
     if text:
         all_issues += rules.check_terminology(text, blueprint["terms"])
         claim_issues, used_claims = rules.check_claims(text, blueprint["claims"])
@@ -456,7 +464,7 @@ def decide(sid: int, body: DecisionBody, user=Depends(current_user)):
         "SELECT count(*) AS n FROM issues WHERE submission_id=? AND status IN ('open','accepted','disputed') AND severity='high'",
         (sid,)).fetchone()["n"]
     if body.action == "approve" and open_high:
-        raise HTTPException(400, f"{open_high} high-priority issue(s) still open. Resolve or dispute them first.")
+        raise HTTPException(400, f"{open_high} high-priority issue(s) still open. Fix the content and recheck first.")
     conn.execute("INSERT INTO approvals (submission_id, user_id, action, reason, created_at) VALUES (?,?,?,?,?)",
                  (sid, user["id"], body.action, body.reason, db.now()))
     new_state = {"approve": "Approved", "request_changes": "Draft", "reject": "Draft"}[body.action]

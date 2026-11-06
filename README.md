@@ -1,5 +1,35 @@
 # ReBrand - AI-Powered Brand Damage Recovery System
 
+## Shorter review flow and input fixes (6 November 2026)
+
+Live demo: https://rebrand.onrender.com
+
+The everyday flow is **Write -> Check -> human approval -> Mark as published**.
+Checking opens that post's results immediately and includes older-post suggestions.
+Edits use one **Save and recheck** button. Approval keeps the post open with its
+next action; the optional publication URL is entered inline. Only actions allowed
+for the role and current state are shown. Optional upload/channel fields are
+collapsed, image descriptions appear for images, and changing a draft clears
+its old results. Unsaved edits disable approval until a fresh scan.
+
+Input fixes: empty text and images without files now produce blocking findings;
+DOCX uses standard-library XML extraction; banned terms match whole terms; an
+approved claim cannot excuse a different superlative in the same sentence.
+Unapproved percentages produce an advisory, Uncertain claim warning. This is a
+heuristic for human review, not general numerical fact-checking.
+
+Verified locally on the updated code with the original tests unchanged:
+
+```text
+ALL 32 CHECKS PASSED
+PASS: expired claims rejected; current claims allowed
+PASS: whole terms, independent claims, percentage review, DOCX extraction and missing-content guards
+```
+
+Run the added regression check with `python tests/test_regressions.py`.
+Human approval, fresh-scan checks and manual external publishing remain required.
+The sections below describe the supplied Round 2 build and its earlier history.
+
 CodeNexus India 2026, Round 2 build. Problem statement by Inkloom AI: intelligent
 brand-governance platform. Team: RASHI INNOVATORS (Amrutha K - team leader; Akshay Kammar).
 

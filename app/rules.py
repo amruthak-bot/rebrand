@@ -19,7 +19,9 @@ WORD_RE = re.compile(r"[A-Za-z']+")
 def _find_spans(text: str, needle: str):
     """Case-insensitive whole-phrase spans of needle in text."""
     spans = []
-    for m in re.finditer(re.escape(needle), text, flags=re.IGNORECASE):
+    if not needle:
+        return spans
+    for m in re.finditer(r"(?<!\w)" + re.escape(needle) + r"(?!\w)", text, flags=re.IGNORECASE):
         spans.append((m.start(), m.end(), text[m.start():m.end()]))
     return spans
 
@@ -73,6 +75,7 @@ def check_claims(text: str, claims):
     issues, used_claims = [], []
     today = datetime.date.today().isoformat()
     approved = [c["claim"] for c in claims if not c.get("expires_on") or c["expires_on"] >= today]
+    approved_spans = [sp for a in approved for sp in _find_spans(text, a)]
     for c in claims:
         if c.get("expires_on") and c["expires_on"] < today and _find_spans(text, c["claim"]):
             issues.append(_issue(
@@ -93,10 +96,7 @@ def check_claims(text: str, claims):
     spans.sort(key=lambda x: x[0])
     for (st, en, found) in spans:
         sent = _sentence(text, st)
-        # is any approved claim present inside this sentence?
-        covered = [a for a in approved if a.lower() in sent.lower()]
-        if covered:
-            used_claims.extend(covered)
+        if any(start <= st and en <= end for start, end, _ in approved_spans):
             continue
         # closest approved claim as suggestion (never invented)
         suggestion = "Remove the unsupported superlative, or replace it with an approved claim from the claim library."
@@ -132,6 +132,15 @@ def check_claims(text: str, claims):
                             uncertain=True,
                         ))
                         break
+    # ponytail: percentages are a heuristic, not fact-checking; expand patterns after testing real claim examples.
+    known_spans = [sp for c in claims for sp in _find_spans(text, c["claim"])]
+    for m in re.finditer(r"(?<!\w)\d+(?:[.,]\d+)*\s*%", text):
+        if not any(start <= m.start() and m.end() <= end for start, end, _ in known_spans):
+            issues.append(_issue(
+                "CLAIM_UNVERIFIED", "claims", "medium",
+                f"Percentage {m.group()} has no matching approved claim.",
+                "Claims rule: numerical promotional claims need approved evidence.",
+                "Verify the figure and its source with a reviewer before publishing.", uncertain=True))
     return issues, sorted(set(used_claims))
 
 

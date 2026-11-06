@@ -1,5 +1,4 @@
-// ReBrand — simple, plain-language interface. Same API as before; only the
-// words, colours and layout changed. No new features, nothing removed.
+// ReBrand — plain-language checks, human approval, then publication registration.
 let token = '', me = null;
 const $ = id => document.getElementById(id);
 const safe = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -19,13 +18,13 @@ async function login(){await act(async()=>{
   $('whoami').innerHTML=safe(me.name)+' ('+safe(me.role)+') <button onclick="location.reload()" class="underline">Sign out</button>';
   showTab('submit');
 })}
-function showTab(name){
+function showTab(name, postId=null){
   document.querySelectorAll('.tab-panel').forEach(x=>x.classList.add('hidden'));
   $('tab-'+name).classList.remove('hidden');
   document.querySelectorAll('.tab-btn').forEach(x=>x.classList.toggle('active',x.dataset.tab===name));
-  act(async()=>{
+  return act(async()=>{
     if(name==='blueprint')await loadBlueprint();
-    if(name==='review')await loadReview();
+    if(name==='review')await loadReview(postId);
     if(name==='published')await loadPublished();
     if(name==='recovery')await loadRecovery();
     if(name==='insights')await loadInsights();
@@ -68,16 +67,17 @@ async function uploadGuideline(){await act(async()=>{
   $('bp-file-text').textContent=r.text;
 })}
 async function createSubmission(check=false){await act(async()=>{
-  const r=await api('/submissions','POST',{title:$('sub-title').value||'Untitled',content_type:$('sub-type').value,channel:$('sub-channel').value,text:$('sub-text').value,alt_text:$('sub-alt').value});
   const f=$('sub-file').files[0];
+  if(check && ($('sub-type').value==='image' ? !f : !$('sub-text').value.trim()&&!f)){
+    $('sub-result').textContent=$('sub-type').value==='image'?'Choose an image first.':'Write a post or choose a document first.';
+    return;
+  }
+  const r=await api('/submissions','POST',{title:$('sub-title').value||'Untitled',content_type:$('sub-type').value,channel:$('sub-channel').value,text:$('sub-text').value,alt_text:$('sub-alt').value});
   if(f){const fd=new FormData();fd.append('file',f);await api('/submissions/'+r.id+'/upload','POST',fd)}
   if(check){
-    const res=await api('/submissions/'+r.id+'/check','POST');
-    const bad=res.issues.filter(i=>i.severity==='high'&&i.status==='open').length;
-    $('sub-result').innerHTML='<div class="rounded-2xl p-4 mt-3 text-sm" style="background:'+(bad?'#fdeceb':'#e7efe8')+'">' +
-      (bad ? '<b>'+bad+' thing(s) need fixing before this can be approved.</b>' : '<b>Looks good — nothing blocking.</b>') +
-      ' See the Review tab for the full list.</div>';
-    showTab('review');
+    await api('/submissions/'+r.id+'/check','POST');
+    $('sub-result').textContent='';
+    await showTab('review',r.id);
   } else {
     $('sub-result').innerHTML='<div class="rounded-2xl p-4 mt-3 text-sm" style="background:#e7efe8">Draft saved. You can check it later from the Review tab.</div>';
   }
@@ -100,7 +100,7 @@ async function dispute(i,id){await act(async()=>{
   if(!reason) return;
   await api('/issues/'+i+'/dispute','POST',{reason}); await inspect(id);
 })}
-async function loadReview(){
+async function loadReview(postId=null){
   const rows=await api('/submissions');
   $('review-list').innerHTML=rows.length ? '' : '<p class="text-sm" style="color:#5c6b58">Nothing to review yet. Write your first post and it will show up here.</p>';
   for(const s of rows){
@@ -109,39 +109,56 @@ async function loadReview(){
     const open=(await api('/submissions/'+s.id)).issues.filter(i=>i.status==='open').length;
     d.innerHTML=`<b class="text-lg" style="font-family:Fraunces,Georgia,serif">${safe(s.title)}</b>
       <span class="badge">${safe(s.state)}</span><span class="badge">${safe(s.content_type)}</span>
-      <p class="text-xs mt-1" style="color:#5c6b58">${open} thing(s) still to look at</p>
+      <p class="text-xs mt-1" style="color:#5c6b58">${!s.checked_fingerprint&&['Draft','In Review'].includes(s.state)?'Check required before approval':open+' thing(s) still to look at'}</p>
       <button class="link mr-3" onclick="inspect(${s.id})">Open this post</button>
-      <button class="link" onclick="check(${s.id})">Run the check again</button>
       <div id="details-${s.id}"></div>`;
     $('review-list').appendChild(d);
   }
+  if(postId!==null)await inspect(postId);
 }
-async function check(id){await act(async()=>{await api('/submissions/'+id+'/check','POST');await inspect(id)})}
+async function check(id){await act(async()=>{await api('/submissions/'+id+'/check','POST');await loadReview(id)})}
 async function inspect(id){await act(async()=>{
   const s=await api('/submissions/'+id);
+  const editable=['Draft','In Review','In Recovery'].includes(s.state);
+  const reviewer=['manager','reviewer'].includes(me.role);
+  const issues=s.issues.filter(x=>x.status!=='resolved');
+  const ready=s.state==='In Review'&&s.checked_fingerprint&&!issues.some(x=>x.severity==='high');
   $('details-'+id).innerHTML=`<p class="text-sm my-2 rounded-xl p-3" style="background:#f6f1e7">${safe(s.text)}</p>
-    <label class="block text-sm font-medium">Edit the post here
-    <textarea id="edit-${id}" class="field mt-1" rows="3">${safe(s.text)}</textarea></label>
-    <button class="btn-dark mt-2" onclick="revise(${id})">Save my edit</button>
-    <div class="mt-3">${s.issues.filter(x=>x.status!=='resolved').map(x=>issueHtml(x,id)).join('')||'<p class="text-sm" style="color:#17573f"><b>Nothing wrong found.</b></p>'}</div>
+    ${editable?`<label class="block text-sm font-medium">Edit the post here
+    <textarea id="edit-${id}" class="field mt-1" rows="3" oninput="markEdit(${id})">${safe(s.text)}</textarea></label>
+    <button class="btn-dark mt-2" onclick="revise(${id},${s.state!=='In Recovery'})">${s.state==='In Recovery'?'Save correction':'Save and recheck'}</button>`:''}
+    <p id="review-status-${id}" class="text-sm mt-3" role="status">${!s.checked_fingerprint&&['Draft','In Review'].includes(s.state)?'Check required before approval.':ready?(reviewer?'Ready for your review and approval.':'Checked. Waiting for a manager or reviewer to approve.'):'Status: '+safe(s.state)}</p>
+    <div class="mt-3">${issues.map(x=>issueHtml(x,id)).join('')|| (s.checked_fingerprint?'<p class="text-sm" style="color:#17573f">No rule findings in the last check. A person still reviews the content.</p>':'')}</div>
     <div class="flex gap-2 flex-wrap mt-2">
-      <button class="btn-primary" onclick="decision(${id},'approve')">Approve</button>
-      <button class="btn-outline" onclick="decision(${id},'request_changes')">Ask for changes</button>
-      <button class="btn-dark" onclick="publish(${id})">Mark as published</button>
-    </div>`;
+      ${reviewer&&ready?`<button id="approve-${id}" class="btn-primary" onclick="decision(${id},'approve')">Approve</button>`:''}
+      ${reviewer&&s.state==='In Review'?`<button class="btn-outline" onclick="decision(${id},'request_changes')">Ask for changes</button>`:''}
+      ${s.state==='Approved'?`<label class="text-sm">Live link (optional)<input id="publish-url-${id}" type="url" class="field mt-1" placeholder="https://..."></label><button class="btn-primary" onclick="publish(${id})">Mark as published</button><p class="help">After posting on your channel, record it here. ReBrand does not post externally.</p>`:''}
+    </div>
+    <div id="memory-${id}" aria-live="polite"></div>`;
+  if(s.checked_fingerprint&&['Draft','In Review','Approved'].includes(s.state))await memoryCheck('memory-'+id,s.title,s.text);
 })}
-async function revise(id){await act(async()=>{await api('/submissions/'+id,'PATCH',{text:$('edit-'+id).value});await inspect(id)})}
+function markEdit(id){
+  $('review-status-'+id).textContent='Changes not checked. Save and recheck before approval.';
+  if($('approve-'+id))$('approve-'+id).disabled=true;
+  $('memory-'+id).innerHTML='';
+}
+async function revise(id,recheck=true){await act(async()=>{
+  await api('/submissions/'+id,'PATCH',{text:$('edit-'+id).value});
+  if(recheck)await api('/submissions/'+id+'/check','POST');
+  await loadReview(id);
+})}
 async function decision(id,action){await act(async()=>{
   let reason='';
   if(action!=='approve'){reason=prompt('What should change? (This is saved for the writer)')||''}
   try{await api('/submissions/'+id+'/decision','POST',{action,reason});}
   catch(e){alert(e.message);return}
-  await loadReview();
+  await loadReview(id);
 })}
 async function publish(id){await act(async()=>{
-  const url=prompt('Paste the live link, if you have one (you can leave it blank):','')||'';
+  const url=$('publish-url-'+id).value.trim();
+  if(url&&!$('publish-url-'+id).reportValidity())return;
   await api('/submissions/'+id+'/publish','POST',{url});
-  await loadReview(); showTab('published');
+  await showTab('published');
 })}
 async function loadPublished(){
   const rows=await api('/published');
@@ -179,10 +196,10 @@ async function loadRecovery(){
       <p class="text-sm mt-1">${safe(x.reason)}</p>
       <p class="text-xs mt-1" style="color:#5c6b58">Found ${new Date(x.detected_at*1000).toLocaleDateString()}${x.owner_name?' · Owner: '+safe(x.owner_name):''}${x.deadline?' · Due: '+safe(x.deadline):''}${x.action?' · Planned fix: '+safe(x.action):''}${x.correction_note?' · Fix: '+safe(x.correction_note):''}</p>
       <div class="flex gap-2 flex-wrap mt-2">
-        <button class="link" onclick="propose(${x.id})">Suggest a fix</button>
-        <button class="link" onclick="recoveryAction(${x.id},'approve-action')">Approve the fix</button>
-        <button class="link" onclick="markCorrected(${x.id})">I fixed the live post</button>
-        <button class="link" onclick="recoveryAction(${x.id},'close')">Check again and close</button>
+        ${x.state==='open'?`<button class="link" onclick="propose(${x.id})">Suggest a fix</button>`:''}
+        ${x.state==='action_proposed'&&['manager','reviewer'].includes(me.role)?`<button class="link" onclick="recoveryAction(${x.id},'approve-action')">Approve the fix</button>`:''}
+        ${x.state==='in_progress'?`<button class="link" onclick="markCorrected(${x.id})">I fixed the live post</button>`:''}
+        ${x.state==='recheck'&&['manager','reviewer'].includes(me.role)?`<button class="link" onclick="recoveryAction(${x.id},'close')">Check again and close</button>`:''}
       </div>`;
     $('recovery-list').appendChild(d);
   }
@@ -211,13 +228,26 @@ async function loadInsights(){
       <div class="rounded-2xl p-4" style="background:#fff;border:1px solid #e5dcc6"><h3 class="font-semibold mb-2">Fixing live posts</h3>${list(d.recovery_by_state,x=>'<li>'+safe(x.state)+': '+x.n+'</li>')}<p class="text-sm mt-1">Average days to fix: ${d.avg_days_to_close} (${d.closed_recoveries} fixed).</p><p class="text-sm">Still unsure, waiting for a person: ${d.open_evidence_debt}</p></div>
     </div>`;
 }
-async function memoryCheck(){await act(async()=>{
-  const result=await api('/memory/check','POST',{title:$('sub-title').value,text:$('sub-text').value});
+async function memoryCheck(target='memory-result',title=$('sub-title').value,text=$('sub-text').value){await act(async()=>{
+  const result=await api('/memory/check','POST',{title,text});
   const items=result.matches.map(x=>`<article class="rounded-2xl p-4 my-2" style="background:#fff;border:1px solid #e5dcc6">
     <b style="font-family:Fraunces,Georgia,serif">${safe(x.title)}</b> · last posted ${new Date(x.published_at*1000).toLocaleDateString()}
     <p class="text-sm mt-1">It said: “${safe(x.previous_text)}”</p>
     <p class="text-xs mt-1" style="color:#5c6b58">Same topic words: ${safe(x.shared_terms.join(', '))}</p>
     ${x.possible_numeric_change?`<p class="text-sm font-semibold" style="color:#7a5410">The numbers may have changed: before ${safe(x.previous_numbers.join(', '))}; in your draft ${safe(x.draft_numbers.join(', '))}. Please check the real numbers before publishing.</p>`:''}
     <p class="text-sm">${safe(x.verification_note)}</p></article>`).join('');
-  $('memory-result').innerHTML='<h3 class="font-semibold mt-4" style="font-family:Fraunces,Georgia,serif">Older posts on this topic</h3><p class="text-xs" style="color:#5c6b58">'+safe(result.note)+'</p>'+(items||'<p class="text-sm mt-2">No older posts on this topic. You are starting fresh.</p>');
+  if(!$(target))return;
+  if(target==='memory-result'&&(title!==$('sub-title').value||text!==$('sub-text').value))return;
+  if(target.startsWith('memory-')&&target!=='memory-result'){
+    const editor=$('edit-'+target.slice(7));
+    if(editor&&editor.value!==text)return;
+  }
+  $(target).innerHTML='<h3 class="font-semibold mt-4" style="font-family:Fraunces,Georgia,serif">Older posts on this topic</h3><p class="text-xs" style="color:#5c6b58">'+safe(result.note)+'</p>'+(items||'<p class="text-sm mt-2">No older posts on this topic. You are starting fresh.</p>');
 })}
+$('tab-submit').addEventListener('input',()=>{
+  $('sub-result').textContent='';
+  $('memory-result').textContent='';
+});
+$('sub-type').addEventListener('change',()=>{
+  $('image-fields').classList.toggle('hidden',$('sub-type').value!=='image');
+});

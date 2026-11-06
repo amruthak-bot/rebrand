@@ -100,27 +100,27 @@
               <option value="document">Document</option>
               <option value="image">Image</option>
             </select></label>
-          <label class="block text-sm font-medium">Where will it go?
-            <select id="sub-channel" class="field mt-1">
-              <option>web</option><option>social</option><option>email</option><option>print</option>
-            </select></label>
         </div>
         <label class="block text-sm font-medium">Your post
           <textarea id="sub-text" rows="6" placeholder="Write or paste your post here…" class="field mt-1"></textarea></label>
-        <label class="block text-sm font-medium">Describe the image, if there is one <span class="font-normal" style="color:#5c6b58">(needed for images)</span>
+        <label id="image-fields" class="block text-sm font-medium hidden">Describe the image <span class="font-normal" style="color:#5c6b58">(needed for images)</span>
           <input id="sub-alt" placeholder="e.g. A photo of our winter offer poster" class="field mt-1"></label>
-        <div class="flex gap-2 items-center flex-wrap">
-          <input type="file" id="sub-file">
-          <span class="text-xs" style="color:#5c6b58">Optional: upload an image or document.</span>
-        </div>
+        <details>
+          <summary class="cursor-pointer text-sm font-semibold">Upload a file or choose a channel</summary>
+          <div class="mt-2 space-y-3">
+            <label class="block text-sm">Image or document<input type="file" id="sub-file" class="block mt-1"></label>
+            <label class="block text-sm">Where will it go?
+              <select id="sub-channel" class="field mt-1"><option>web</option><option>social</option><option>email</option><option>print</option></select>
+            </label>
+          </div>
+        </details>
         <div class="flex gap-2 flex-wrap">
           <button onclick="createSubmission(true)" class="btn-primary">✓ Check my post</button>
           <button onclick="createSubmission()" class="btn-outline">Save as a draft</button>
         </div>
-        <button onclick="memoryCheck()" class="btn-amber">Compare with older posts</button>
-        <p class="text-xs" style="color:#5c6b58">This looks at posts you already published on the same topic, and shows when they went live and what they said — so you can update anything that has changed.</p>
+        <p class="text-xs" style="color:#5c6b58">Checking also compares older posts on the same topic. <button onclick="memoryCheck()" class="link">Compare with older posts first</button></p>
         <div id="memory-result" aria-live="polite"></div>
-        <div id="sub-result"></div>
+        <div id="sub-result" role="status"></div>
       </div>
     </section>
 
@@ -166,6 +166,7 @@
 .sev-medium { border-left:5px solid #b7791f; }
 .sev-low { border-left:5px solid #17573f; }
 .link { color:#17573f; text-decoration:underline; }
+button:disabled { opacity:.5; cursor:not-allowed; }
 </style>
 <script src="/static/app.js"></script>
 </body>
