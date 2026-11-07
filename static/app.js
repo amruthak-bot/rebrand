@@ -229,6 +229,7 @@ async function loadInsights(){
     </div>`;
 }
 async function memoryCheck(target='memory-result',title=$('sub-title').value,text=$('sub-text').value){await act(async()=>{
+  if(!title.trim()&&!text.trim()){$(target).innerHTML='<p class="text-sm mt-2">Enter a title or draft text to compare.</p>';return}
   const result=await api('/memory/check','POST',{title,text});
   const items=result.matches.map(x=>`<article class="rounded-2xl p-4 my-2" style="background:#fff;border:1px solid #e5dcc6">
     <b style="font-family:Fraunces,Georgia,serif">${safe(x.title)}</b> · last posted ${new Date(x.published_at*1000).toLocaleDateString()}
