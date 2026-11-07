@@ -11,6 +11,17 @@ async function api(path, method='GET', body=null) {
   return value;
 }
 async function act(f){try{await f()}catch(e){alert(e.message)}}
+// On-page question box. Replaces window.prompt(), which some browsers
+// (including in-app browsers) block or hide, leaving buttons that do nothing.
+function ask(title,help,def,options){return new Promise(res=>{
+  $('ask-title').textContent=title;$('ask-help').textContent=help||'';
+  const inp=$('ask-input'),sel=$('ask-select');
+  if(options){sel.innerHTML=options.map(o=>'<option>'+safe(o)+'</option>').join('');sel.value=def||options[0];sel.classList.remove('hidden');inp.classList.add('hidden')}
+  else{inp.value=def||'';inp.classList.remove('hidden');sel.classList.add('hidden')}
+  $('ask-box').classList.remove('hidden');$('ask-box').scrollIntoView({block:'nearest'});
+  $('ask-ok').onclick=()=>{$('ask-box').classList.add('hidden');res(options?sel.value:inp.value)};
+  $('ask-cancel').onclick=()=>{$('ask-box').classList.add('hidden');res(null)};
+})}
 async function login(){await act(async()=>{
   const v=await api('/login','POST',{email:$('email').value,password:$('password').value});
   token=v.token;me=v.user;
@@ -19,6 +30,7 @@ async function login(){await act(async()=>{
   showTab('submit');
 })}
 function showTab(name, postId=null){
+  $('ask-box').classList.add('hidden');
   document.querySelectorAll('.tab-panel').forEach(x=>x.classList.add('hidden'));
   $('tab-'+name).classList.remove('hidden');
   document.querySelectorAll('.tab-btn').forEach(x=>x.classList.toggle('active',x.dataset.tab===name));
@@ -96,7 +108,7 @@ function issueHtml(x, id){
 }
 async function accept(i,id){await act(async()=>{await api('/issues/'+i+'/accept','POST');alert('Noted. Edit the post and run the check again before approval.');await inspect(id)})}
 async function dispute(i,id){await act(async()=>{
-  const reason=prompt('Why is this flag wrong? This goes to the reviewer.');
+  const reason=await ask('Why is this flag wrong?','This goes to the reviewer.');
   if(!reason) return;
   await api('/issues/'+i+'/dispute','POST',{reason}); await inspect(id);
 })}
@@ -149,7 +161,7 @@ async function revise(id,recheck=true){await act(async()=>{
 })}
 async function decision(id,action){await act(async()=>{
   let reason='';
-  if(action!=='approve'){reason=prompt('What should change? (This is saved for the writer)')||''}
+  if(action!=='approve'){reason=await ask('What should change?','This is saved for the writer.');if(reason===null)return}
   try{await api('/submissions/'+id+'/decision','POST',{action,reason});}
   catch(e){alert(e.message);return}
   await loadReview(id);
@@ -181,7 +193,7 @@ async function recheck(id){await act(async()=>{
   await loadRecovery();
 })}
 async function report(id){await act(async()=>{
-  const reason=prompt('What is wrong with this live post?');
+  const reason=await ask('What is wrong with this live post?','');
   if(!reason) return;
   await api('/published/'+id+'/report','POST',{reason});
   showTab('recovery');
@@ -205,13 +217,13 @@ async function loadRecovery(){
   }
 }
 async function propose(id){await act(async()=>{
-  const action=prompt('What should we do? Type: edit, replace, correction_note, or unpublish','edit');
+  const action=await ask('What should we do?','Pick the fix for this post.','edit',['edit','replace','correction_note','unpublish']);
   if(!action) return;
   await api('/recovery/'+id+'/propose','POST',{action});
   await loadRecovery();
 })}
 async function markCorrected(id){await act(async()=>{
-  const correction_note=prompt('What did you actually change on the live post? (Write it in your own words — this is a human confirmation, not an automatic check.)');
+  const correction_note=await ask('What did you actually change on the live post?','Write it in your own words — this is a human confirmation, not an automatic check.');
   if(!correction_note) return;
   await api('/recovery/'+id+'/mark-corrected','POST',{correction_note});
   await loadRecovery();

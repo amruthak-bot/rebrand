@@ -56,6 +56,17 @@
       <button class="tab-btn" data-tab="insights" onclick="showTab('insights')">Simple numbers</button>
     </nav>
 
+    <div id="ask-box" class="card hidden" style="margin-bottom:1rem">
+      <h3 id="ask-title" class="h2" style="font-size:1.15rem"></h3>
+      <p id="ask-help" class="help"></p>
+      <textarea id="ask-input" rows="3" class="field mt-1"></textarea>
+      <select id="ask-select" class="field mt-1 hidden"></select>
+      <div class="flex gap-2 mt-3 flex-wrap">
+        <button id="ask-ok" class="btn-primary">Save</button>
+        <button id="ask-cancel" class="btn-outline">Cancel</button>
+      </div>
+    </div>
+
     <section id="tab-blueprint" class="tab-panel card">
       <h2 class="h2">Your brand rules <span id="bp-version" class="text-sm font-normal" style="color:#5c6b58"></span></h2>
       <p class="help">These are the rules every post is checked against. Every save makes a new version, and live posts are checked again.</p>
