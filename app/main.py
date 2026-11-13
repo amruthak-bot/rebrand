@@ -2,6 +2,7 @@
 FastAPI backend: blueprint, checks, approval workflow, published register,
 recovery tracker, brand validity graph, insights. SQLite storage."""
 import datetime
+import threading
 import hashlib
 import json
 import os
@@ -12,14 +13,43 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import ai, db, extract, images, rules, security
+from . import ai, db, extract, images, ocr, rules, security
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-UPLOAD_DIR = os.path.join(BASE, "data", "uploads")
+UPLOAD_DIR = os.environ.get("REBRAND_UPLOADS", os.path.join(BASE, "data", "uploads"))
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-app = FastAPI(title="ReBrand", version="0.1.0")
+app = FastAPI(title="ReBrand", version="0.10.0")
+
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    resp = await call_next(request)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    return resp
+
+# Uploads are read fully into memory, so cap them: a huge file would otherwise
+# OOM the (small) container and take the demo down for everyone.
+MAX_UPLOAD_BYTES = int(os.environ.get("REBRAND_MAX_UPLOAD_MB", "20")) * 1024 * 1024
+# Text fields come in as JSON, not uploads, so they get their own caps.
+MAX_TEXT_CHARS = int(os.environ.get("REBRAND_MAX_TEXT_CHARS", "500000"))
+MAX_TITLE_CHARS = 300
+MAX_ALT_CHARS = 2000
+MAX_COMMENT_CHARS = 5000
+
+
+async def _read_upload(file: UploadFile) -> bytes:
+    data = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"File too large. The limit is {MAX_UPLOAD_BYTES // (1024 * 1024)} MB.")
+    return data
+if os.environ.get("REBRAND_AUTOSEED") == "1":
+    from . import seed as _seed
+    _seed.run()          # no-op when the database already has users
 conn = db.init()
+_db_lock = threading.RLock()
 
 
 # ---------- auth ----------
@@ -37,11 +67,26 @@ class LoginBody(BaseModel):
     password: str
 
 
+# Brute-force throttle: after several failed sign-ins for one email, pause that
+# email for a few minutes. In-memory; a restart clears it.
+_LOGIN_FAILS = {}
+_LOGIN_WINDOW = 300
+_LOGIN_MAX = 8
+
+
 @app.post("/api/login")
 def login(body: LoginBody):
+    email = (body.email or "").strip().lower()
+    now = db.now()
+    fails = [t for t in _LOGIN_FAILS.get(email, []) if now - t < _LOGIN_WINDOW]
+    _LOGIN_FAILS[email] = fails
+    if len(fails) >= _LOGIN_MAX:
+        raise HTTPException(429, "Too many failed sign-ins. Wait a few minutes and try again.")
     row = conn.execute("SELECT * FROM users WHERE email=?", (body.email,)).fetchone()
     if not row or not security.verify_password(body.password, row["pass_hash"]):
+        fails.append(now)
         raise HTTPException(401, "Wrong email or password")
+    _LOGIN_FAILS.pop(email, None)
     token = security.create_session(conn, row["id"])
     conn.commit()
     return {"token": token, "user": {"id": row["id"], "name": row["name"], "email": row["email"],
@@ -54,6 +99,14 @@ def me(user=Depends(current_user)):
             "role": user["role"], "workspace_id": user["workspace_id"]}
 
 
+@app.post("/api/logout")
+def logout(authorization: str = Header(default="")):
+    token = authorization.replace("Bearer ", "").strip()
+    security.revoke_session(conn, token)
+    conn.commit()
+    return {"ok": True}
+
+
 # ---------- blueprint ----------
 
 class BlueprintBody(BaseModel):
@@ -64,30 +117,104 @@ class BlueprintBody(BaseModel):
     palette: list = []      # ["#rrggbb"]
 
 
-def _save_blueprint(ws, body: BlueprintBody, user_id):
+_HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _validate_blueprint(body):
+    """Validate and normalize a blueprint payload BEFORE anything is written.
+    Every bad input is a readable 400 here, never a 500 mid-insert."""
+    if isinstance(body, BlueprintBody):
+        body = {"note": body.note, "guidelines": body.guidelines,
+                "terms": body.terms, "claims": body.claims, "palette": body.palette}
+    guidelines = []
+    for g in body.get("guidelines") or []:
+        if not isinstance(g, dict):
+            raise HTTPException(400, "Each guideline must be an object with title and body")
+        guidelines.append({"title": str(g.get("title") or "Guideline").strip() or "Guideline",
+                           "body": str(g.get("body") or "").strip()})
+    terms = []
+    for t in body.get("terms") or []:
+        if not isinstance(t, dict):
+            raise HTTPException(400, "Each term must be an object with term and kind")
+        kind = t.get("kind")
+        if kind not in ("banned", "preferred"):
+            raise HTTPException(400, f"term kind must be banned|preferred: {t}")
+        term = str(t.get("term") or "").strip()
+        if not term:
+            raise HTTPException(400, "A term is missing its word")
+        terms.append({"term": term, "kind": kind,
+                      "replacement": str(t.get("replacement") or "").strip(),
+                      "note": str(t.get("note") or "").strip()})
+    claims = []
+    for c in body.get("claims") or []:
+        if not isinstance(c, dict):
+            raise HTTPException(400, "Each claim must be an object with claim and risk")
+        claim = str(c.get("claim") or "").strip()
+        if not claim:
+            raise HTTPException(400, "A claim is missing its text")
+        risk = str(c.get("risk") or "medium").strip().lower()
+        if risk not in ("high", "medium", "low"):
+            raise HTTPException(400, f"claim risk must be high|medium|low: {risk}")
+        exp = c.get("expires_on") or None
+        if exp is not None:
+            exp = str(exp).strip() or None
+        if exp:
+            try:
+                datetime.date.fromisoformat(exp)
+            except ValueError:
+                raise HTTPException(400, f"Claim expiry must be a YYYY-MM-DD date: {exp}")
+        claims.append({"claim": claim, "risk": risk, "expires_on": exp})
+    palette = []
+    for p in body.get("palette") or []:
+        hexv = str(p).strip()
+        if not hexv:
+            continue
+        if not _HEX_RE.match(hexv):
+            raise HTTPException(400, f"Brand colours must look like #1a56db (6 hex digits): {hexv}")
+        palette.append(hexv.lower())
+    return {"note": str(body.get("note") or "").strip(), "guidelines": guidelines,
+            "terms": terms, "claims": claims, "palette": palette}
+
+
+def _payload_hash(payload):
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+# Preview-before-save: the last previewed payload hash per (workspace, user).
+# A rule change that was never previewed is refused with 409, so a manager
+# always sees the blast radius before committing it.
+_PREVIEWS = {}
+_PREVIEW_TTL = 1800  # seconds
+
+
+def _save_blueprint(ws, body, user_id, _validated=None):
+    payload = _validated or _validate_blueprint(body)
     cur = db.current_version(conn, ws)
     version = (cur["version"] + 1) if cur else 1
-    r = conn.execute(
-        "INSERT INTO blueprint_versions (workspace_id, version, note, created_by, created_at) VALUES (?,?,?,?,?)",
-        (ws, version, body.note, user_id, db.now()))
-    vid = r.lastrowid
-    for g in body.guidelines:
-        conn.execute("INSERT INTO guidelines (version_id, title, body) VALUES (?,?,?)",
-                     (vid, g.get("title", "Guideline"), g.get("body", "")))
-    for t in body.terms:
-        if t.get("kind") not in ("banned", "preferred"):
-            raise HTTPException(400, f"term kind must be banned|preferred: {t}")
-        conn.execute("INSERT INTO terms (version_id, term, kind, replacement, note) VALUES (?,?,?,?,?)",
-                     (vid, t["term"], t["kind"], t.get("replacement", ""), t.get("note", "")))
-    for c in body.claims:
-        conn.execute("INSERT INTO claims (version_id, claim, risk, expires_on) VALUES (?,?,?,?)",
-                     (vid, c["claim"], c.get("risk", "medium"), c.get("expires_on")))
-    for hexv in body.palette:
-        conn.execute("INSERT INTO palette_colors (version_id, hex) VALUES (?,?)", (vid, hexv))
-    db.audit(conn, ws, user_id, "blueprint.saved", "blueprint_version", vid, f"version {version}")
-    conn.commit()
-    # guideline change -> re-check all monitoring published items (Brand Validity Graph impact)
-    impacted = _recheck_all_published(ws, reason=f"Blueprint updated to version {version}")
+    with _db_lock:
+        try:
+            r = conn.execute(
+                "INSERT INTO blueprint_versions (workspace_id, version, note, created_by, created_at) VALUES (?,?,?,?,?)",
+                (ws, version, payload["note"], user_id, db.now()))
+            vid = r.lastrowid
+            for g in payload["guidelines"]:
+                conn.execute("INSERT INTO guidelines (version_id, title, body) VALUES (?,?,?)",
+                             (vid, g["title"], g["body"]))
+            for t in payload["terms"]:
+                conn.execute("INSERT INTO terms (version_id, term, kind, replacement, note) VALUES (?,?,?,?,?)",
+                             (vid, t["term"], t["kind"], t["replacement"], t["note"]))
+            for c in payload["claims"]:
+                conn.execute("INSERT INTO claims (version_id, claim, risk, expires_on) VALUES (?,?,?,?)",
+                             (vid, c["claim"], c["risk"], c["expires_on"]))
+            for hexv in payload["palette"]:
+                conn.execute("INSERT INTO palette_colors (version_id, hex) VALUES (?,?)", (vid, hexv))
+            db.audit(conn, ws, user_id, "blueprint.saved", "blueprint_version", vid, f"version {version}")
+            # guideline change -> re-check all monitoring published items (Brand Validity Graph impact)
+            impacted = _recheck_all_published(ws, reason=f"Blueprint updated to version {version}")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
     return {"version_id": vid, "version": version, "impacted_published": impacted}
 
 
@@ -95,12 +222,21 @@ def _save_blueprint(ws, body: BlueprintBody, user_id):
 def save_blueprint(body: BlueprintBody, user=Depends(current_user)):
     if user["role"] not in ("manager", "reviewer"):
         raise HTTPException(403, "Only managers or reviewers can edit the blueprint")
-    return _save_blueprint(user["workspace_id"], body, user["id"])
+    payload = _validate_blueprint(body)
+    if os.environ.get("REBRAND_REQUIRE_PREVIEW", "1") != "0":
+        key = (user["workspace_id"], user["id"])
+        hashed, at = _PREVIEWS.get(key, (None, 0))
+        if hashed != _payload_hash(payload) or db.now() - at > _PREVIEW_TTL:
+            raise HTTPException(
+                409, "Preview the impact first: run 'Preview the impact first' with these exact rules, "
+                     "review what would break, then save.")
+        del _PREVIEWS[key]
+    return _save_blueprint(user["workspace_id"], None, user["id"], _validated=payload)
 
 
 @app.post("/api/blueprint/upload-guideline")
 async def upload_guideline(file: UploadFile = File(...), user=Depends(current_user)):
-    data = await file.read()
+    data = await _read_upload(file)
     try:
         text = extract.extract_text(file.filename, data)
     except ValueError as e:
@@ -124,15 +260,15 @@ async def add_asset(name: str = Form(...), active: int = Form(1),
                     file: UploadFile = File(...), user=Depends(current_user)):
     if user["role"] not in ("manager", "reviewer"):
         raise HTTPException(403, "Only managers or reviewers can add assets")
-    data = await file.read()
-    sha = images.sha256_bytes(data)
-    path = os.path.join(UPLOAD_DIR, sha[:16] + "_" + os.path.basename(file.filename))
-    with open(path, "wb") as f:
-        f.write(data)
+    data = await _read_upload(file)
     try:
         pal = images.dominant_palette(data)
     except Exception:
         raise HTTPException(400, "File is not a readable image")
+    sha = images.sha256_bytes(data)
+    path = os.path.join(UPLOAD_DIR, sha[:16] + "_" + os.path.basename(file.filename))
+    with open(path, "wb") as f:
+        f.write(data)
     r = conn.execute(
         "INSERT INTO assets (workspace_id, name, sha256, path, palette_json, active, uploaded_by, created_at) "
         "VALUES (?,?,?,?,?,?,?,?)",
@@ -213,6 +349,14 @@ def memory_check(body: MemoryQuery, user=Depends(current_user)):
 
 @app.post("/api/submissions")
 def create_submission(body: SubmissionBody, user=Depends(current_user)):
+    if body.content_type not in ("text", "image", "document"):
+        raise HTTPException(400, "content_type must be text|image|document")
+    if len(body.title) > MAX_TITLE_CHARS:
+        raise HTTPException(400, f"Title is too long (max {MAX_TITLE_CHARS} characters).")
+    if len(body.text) > MAX_TEXT_CHARS:
+        raise HTTPException(400, f"Post text is too long (max {MAX_TEXT_CHARS} characters).")
+    if len(body.alt_text) > MAX_ALT_CHARS:
+        raise HTTPException(400, f"Alt text is too long (max {MAX_ALT_CHARS} characters).")
     cur = db.current_version(conn, user["workspace_id"])
     r = conn.execute(
         "INSERT INTO submissions (workspace_id, creator_id, title, content_type, channel, text, alt_text, "
@@ -229,17 +373,25 @@ async def submission_upload(sid: int, file: UploadFile = File(...), user=Depends
     sub = _get_submission(sid, user)
     if sub["state"] not in ("Draft", "In Review", "In Recovery"):
         raise HTTPException(400, "Cannot upload to approved or published content")
-    data = await file.read()
-    sha = images.sha256_bytes(data)
-    path = os.path.join(UPLOAD_DIR, f"sub{sid}_" + sha[:12] + "_" + os.path.basename(file.filename))
-    with open(path, "wb") as f:
-        f.write(data)
+    data = await _read_upload(file)
     ctype = sub["content_type"]
+    # Validate BEFORE writing anything to disk, so a rejected upload leaves no orphan file.
+    text = None
     if ctype in ("text", "document"):
         try:
             text = extract.extract_text(file.filename, data)
         except ValueError as e:
             raise HTTPException(400, str(e))
+    else:
+        try:
+            images.dominant_palette(data)
+        except Exception:
+            raise HTTPException(400, "File is not a readable image")
+    sha = images.sha256_bytes(data)
+    path = os.path.join(UPLOAD_DIR, f"sub{sid}_" + sha[:12] + "_" + os.path.basename(file.filename))
+    with open(path, "wb") as f:
+        f.write(data)
+    if ctype in ("text", "document"):
         conn.execute("UPDATE submissions SET text=?, file_path=?, updated_at=? WHERE id=?",
                      (text, path, db.now(), sid))
     else:
@@ -271,13 +423,12 @@ def _run_checks(sub, blueprint, ws_assets):
     """Run all checks for a submission dict; return (issues, links, ai_note)."""
     text = sub.get("text") or ""
     all_issues, links = [], []
-    if (sub.get("content_type") == "image" and not sub.get("file_path")) or (
-            sub.get("content_type") != "image" and not text.strip()):
+    if not text.strip() and not sub.get("file_path"):
         all_issues.append({
-            "rule_code": "CONTENT_MISSING", "category": "content", "severity": "high",
-            "evidence": "There is no image to check." if sub.get("content_type") == "image" else "There is no text to check.",
-            "clause": "Content must be supplied before it can be checked and approved.",
-            "suggestion": "Upload an image." if sub.get("content_type") == "image" else "Write a post or upload a document containing text.",
+            "rule_code": "EMPTY_CONTENT", "category": "completeness", "severity": "high",
+            "evidence": "The post has no text and no uploaded file.",
+            "clause": "",
+            "suggestion": "Write the post or upload the creative before asking for a review.",
         })
     if text:
         all_issues += rules.check_terminology(text, blueprint["terms"])
@@ -293,6 +444,17 @@ def _run_checks(sub, blueprint, ws_assets):
             data, sub.get("alt_text", ""), blueprint, ws_assets, images)
         all_issues += img_issues
         links += img_links
+        # OCR: read the words inside the image and run the same text rules on them
+        ocr_text, _ = ocr.read_text(data)
+        if ocr_text:
+            for i in rules.check_terminology(ocr_text, blueprint["terms"]):
+                i["evidence"] = "Text read from the image (OCR): " + i["evidence"]
+                all_issues.append(i)
+            claim_issues, used = rules.check_claims(ocr_text, blueprint["claims"])
+            for i in claim_issues:
+                i["evidence"] = "Text read from the image (OCR): " + i["evidence"]
+                all_issues.append(i)
+            links += [("claim", c) for c in used]
     ai_issues, ai_note = ai.tone_check(text, blueprint)
     all_issues += ai_issues
     if not configured_guideline_citation_possible(blueprint):
@@ -331,10 +493,16 @@ def revise_submission(sid: int, body: SubmissionUpdate, user=Depends(current_use
     if sub["state"] not in ("Draft", "In Review", "In Recovery"):
         raise HTTPException(400, f"Cannot edit in state {sub['state']}")
     if body.text is not None:
+        if len(body.text) > MAX_TEXT_CHARS:
+            raise HTTPException(400, f"Post text is too long (max {MAX_TEXT_CHARS} characters).")
         conn.execute("UPDATE submissions SET text=? WHERE id=?", (body.text, sid))
     if body.alt_text is not None:
+        if len(body.alt_text) > MAX_ALT_CHARS:
+            raise HTTPException(400, f"Alt text is too long (max {MAX_ALT_CHARS} characters).")
         conn.execute("UPDATE submissions SET alt_text=? WHERE id=?", (body.alt_text, sid))
     if body.title is not None:
+        if len(body.title) > MAX_TITLE_CHARS:
+            raise HTTPException(400, f"Title is too long (max {MAX_TITLE_CHARS} characters).")
         conn.execute("UPDATE submissions SET title=? WHERE id=?", (body.title, sid))
     _invalidate_check(sid)
     conn.execute("UPDATE submissions SET updated_at=? WHERE id=?", (db.now(), sid))
@@ -376,9 +544,7 @@ def _issues_for(sid):
 @app.get("/api/submissions")
 def list_submissions(user=Depends(current_user)):
     rows = conn.execute(
-        "SELECT s.*, u.name AS creator_name, "
-        "(SELECT count(*) FROM issues i WHERE i.submission_id=s.id AND i.status!='resolved') AS open_issues "
-        "FROM submissions s JOIN users u ON u.id=s.creator_id "
+        "SELECT s.*, u.name AS creator_name FROM submissions s JOIN users u ON u.id=s.creator_id "
         "WHERE s.workspace_id=? ORDER BY s.updated_at DESC", (user["workspace_id"],)).fetchall()
     return [dict(r) for r in rows]
 
@@ -424,6 +590,8 @@ def dispute_issue(iid: int, body: IssueAction, user=Depends(current_user)):
         "WHERE i.id=? AND s.workspace_id=?", (iid, user["workspace_id"])).fetchone()
     if not row:
         raise HTTPException(404, "Issue not found")
+    if row["status"] not in ("open", "accepted"):
+        raise HTTPException(400, "Only open or accepted issues can be disputed")
     conn.execute("UPDATE issues SET status='disputed', dispute_reason=? WHERE id=?", (body.reason, iid))
     db.audit(conn, user["workspace_id"], user["id"], "issue.disputed", "issue", iid,
              f"{row['rule_code']}: {body.reason}")
@@ -439,6 +607,10 @@ class CommentBody(BaseModel):
 @app.post("/api/submissions/{sid}/comments")
 def add_comment(sid: int, body: CommentBody, user=Depends(current_user)):
     _get_submission(sid, user)
+    if not body.body.strip():
+        raise HTTPException(400, "Comment is empty")
+    if len(body.body) > MAX_COMMENT_CHARS:
+        raise HTTPException(400, f"Comment is too long (max {MAX_COMMENT_CHARS} characters).")
     r = conn.execute("INSERT INTO comments (submission_id, user_id, body, kind, created_at) VALUES (?,?,?,?,?)",
                      (sid, user["id"], body.body, body.kind, db.now()))
     conn.commit()
@@ -454,26 +626,30 @@ class DecisionBody(BaseModel):
 def decide(sid: int, body: DecisionBody, user=Depends(current_user)):
     if user["role"] not in ("manager", "reviewer"):
         raise HTTPException(403, "Only a manager or reviewer can approve or reject")
-    sub = _get_submission(sid, user)
     if body.action not in ("approve", "request_changes", "reject"):
         raise HTTPException(400, "action must be approve|request_changes|reject")
-    if body.action == "approve":
-        if sub["state"] != "In Review" or not sub.get("checked_fingerprint") or sub["checked_fingerprint"] != _fingerprint(sub):
-            raise HTTPException(400, "Content must be checked again before approval")
-        if sub["version_id"] != db.current_version(conn, user["workspace_id"])["id"]:
-            raise HTTPException(400, "Brand blueprint changed; recheck before approval")
-    open_high = conn.execute(
-        "SELECT count(*) AS n FROM issues WHERE submission_id=? AND status IN ('open','accepted','disputed') AND severity='high'",
-        (sid,)).fetchone()["n"]
-    if body.action == "approve" and open_high:
-        raise HTTPException(400, f"{open_high} high-priority issue(s) still open. Fix the content and recheck first.")
-    conn.execute("INSERT INTO approvals (submission_id, user_id, action, reason, created_at) VALUES (?,?,?,?,?)",
-                 (sid, user["id"], body.action, body.reason, db.now()))
-    new_state = {"approve": "Approved", "request_changes": "Draft", "reject": "Draft"}[body.action]
-    conn.execute("UPDATE submissions SET state=?, updated_at=?, approved_fingerprint=? WHERE id=?",
-                 (new_state, db.now(), _fingerprint(sub) if body.action == "approve" else "", sid))
-    db.audit(conn, user["workspace_id"], user["id"], f"submission.{body.action}", "submission", sid, body.reason)
-    conn.commit()
+    with _db_lock:
+        sub = _get_submission(sid, user)
+        if sub["state"] != "In Review":
+            raise HTTPException(400, f"Only in-review content can get a decision (current state: {sub['state']}).")
+        if body.action == "approve":
+            if not sub.get("checked_fingerprint") or sub["checked_fingerprint"] != _fingerprint(sub):
+                raise HTTPException(400, "Content must be checked again before approval")
+            cur = db.current_version(conn, user["workspace_id"])
+            if not cur or sub["version_id"] != cur["id"]:
+                raise HTTPException(400, "Brand blueprint changed; recheck before approval")
+        open_high = conn.execute(
+            "SELECT count(*) AS n FROM issues WHERE submission_id=? AND status IN ('open','accepted','disputed') AND severity='high'",
+            (sid,)).fetchone()["n"]
+        if body.action == "approve" and open_high:
+            raise HTTPException(400, f"{open_high} high-priority issue(s) still open. Resolve or dispute them first.")
+        conn.execute("INSERT INTO approvals (submission_id, user_id, action, reason, created_at) VALUES (?,?,?,?,?)",
+                     (sid, user["id"], body.action, body.reason, db.now()))
+        new_state = {"approve": "Approved", "request_changes": "Draft", "reject": "Draft"}[body.action]
+        conn.execute("UPDATE submissions SET state=?, updated_at=?, approved_fingerprint=? WHERE id=?",
+                     (new_state, db.now(), _fingerprint(sub) if body.action == "approve" else "", sid))
+        db.audit(conn, user["workspace_id"], user["id"], f"submission.{body.action}", "submission", sid, body.reason)
+        conn.commit()
     return {"id": sid, "state": new_state}
 
 
@@ -496,6 +672,11 @@ def publish(sid: int, body: PublishBody, user=Depends(current_user)):
         raise HTTPException(400, "No approval record found.")
     if not sub.get("approved_fingerprint") or sub["approved_fingerprint"] != _fingerprint(sub):
         raise HTTPException(400, "Approved content has changed; fresh review required")
+    cur = db.current_version(conn, user["workspace_id"])
+    if not cur or sub["version_id"] != cur["id"]:
+        raise HTTPException(400, "Brand rules changed since this was approved. Run the check again and re-approve.")
+    if body.url and not body.url.lower().startswith(("http://", "https://")):
+        raise HTTPException(400, "The live link must start with http:// or https://")
     # re-run checks to build Brand Validity Graph links from what the item actually uses
     blueprint = db.load_blueprint(conn, sub["version_id"])
     assets = [dict(r) for r in conn.execute("SELECT * FROM assets WHERE workspace_id=?",
@@ -503,21 +684,22 @@ def publish(sid: int, body: PublishBody, user=Depends(current_user)):
     issues, links, _ = _run_checks(sub, blueprint, assets)
     if any(i["severity"] == "high" for i in issues):
         raise HTTPException(400, "Content has high-priority violations; recheck and approve again")
-    r = conn.execute(
-        "INSERT INTO published (submission_id, workspace_id, title, url, version_id, approver_id, published_at, state) "
-        "VALUES (?,?,?,?,?,?,?, 'Monitoring')",
-        (sid, user["workspace_id"], sub["title"], body.url, sub["version_id"], approved["user_id"], db.now()))
-    pid = r.lastrowid
-    for ref_type, ref_key in links:
-        conn.execute("INSERT INTO published_links (published_id, ref_type, ref_key) VALUES (?,?,?)",
-                     (pid, ref_type, ref_key))
-    for g in blueprint["guidelines"]:
-        conn.execute("INSERT INTO published_links (published_id, ref_type, ref_key) VALUES (?,?,?)",
-                     (pid, "guideline", g["title"]))
-    conn.execute("UPDATE submissions SET state='Published', updated_at=? WHERE id=?", (db.now(), sid))
-    db.audit(conn, user["workspace_id"], user["id"], "content.published", "published", pid,
-             f"registered at blueprint v{blueprint['version_id']}")
-    conn.commit()
+    with _db_lock:
+        r = conn.execute(
+            "INSERT INTO published (submission_id, workspace_id, title, url, version_id, approver_id, published_at, state) "
+            "VALUES (?,?,?,?,?,?,?, 'Monitoring')",
+            (sid, user["workspace_id"], sub["title"], body.url, sub["version_id"], approved["user_id"], db.now()))
+        pid = r.lastrowid
+        for ref_type, ref_key in links:
+            conn.execute("INSERT INTO published_links (published_id, ref_type, ref_key) VALUES (?,?,?)",
+                         (pid, ref_type, ref_key))
+        for g in blueprint["guidelines"]:
+            conn.execute("INSERT INTO published_links (published_id, ref_type, ref_key) VALUES (?,?,?)",
+                         (pid, "guideline", g["title"]))
+        conn.execute("UPDATE submissions SET state='Published', updated_at=? WHERE id=?", (db.now(), sid))
+        db.audit(conn, user["workspace_id"], user["id"], "content.published", "published", pid,
+                 f"registered at blueprint v{blueprint['version_id']}")
+        conn.commit()
     return {"published_id": pid, "state": "Monitoring", "graph_links": len(links) + len(blueprint["guidelines"])}
 
 
@@ -557,12 +739,10 @@ def _open_recovery(published_row, reason, issues):
     return r.lastrowid, True
 
 
-def _recheck_published(published_row, reason):
-    """Re-check one published item against the CURRENT blueprint. Returns (task_id, created, issues)."""
+def _published_issues(published_row, blueprint, today=None):
+    """Pure check of one published item against a given blueprint snapshot (no writes)."""
     sub = dict(conn.execute("SELECT * FROM submissions WHERE id=?",
                             (published_row["submission_id"],)).fetchone())
-    cur = db.current_version(conn, published_row["workspace_id"])
-    blueprint = db.load_blueprint(conn, cur["id"])
     assets = [dict(r) for r in conn.execute("SELECT * FROM assets WHERE workspace_id=?",
                                             (published_row["workspace_id"],)).fetchall()]
     issues, links, _ = _run_checks(sub, blueprint, assets)
@@ -571,7 +751,7 @@ def _recheck_published(published_row, reason):
         "SELECT ref_key FROM published_links WHERE published_id=? AND ref_type='claim'",
         (published_row["id"],))]
     current_claims = {c["claim"]: c for c in blueprint["claims"]}
-    today = datetime.date.today().isoformat()
+    today = today or datetime.date.today().isoformat()
     for used in graph_claims:
         if used not in current_claims:
             issues.append({
@@ -591,6 +771,14 @@ def _recheck_published(published_row, reason):
                     "suggestion": "Remove or replace the expired claim in the live item.",
                     "source": "rule", "uncertain": 0,
                 })
+    return issues
+
+
+def _recheck_published(published_row, reason):
+    """Re-check one published item against the CURRENT blueprint. Returns (task_id, created, issues)."""
+    cur = db.current_version(conn, published_row["workspace_id"])
+    blueprint = db.load_blueprint(conn, cur["id"])
+    issues = _published_issues(published_row, blueprint)
     open_issues = [i for i in issues]
     if open_issues:
         tid, created = _open_recovery(published_row, reason, open_issues)
@@ -631,6 +819,8 @@ def report_published(pid: int, body: ReportBody, user=Depends(current_user)):
                        (pid, user["workspace_id"])).fetchone()
     if not row:
         raise HTTPException(404, "Published item not found")
+    if not body.reason.strip():
+        raise HTTPException(400, "Say what is wrong with the live post")
     tid, created, issues = _recheck_published(dict(row), f"Reported by {user['name']}: {body.reason}")
     if not created and not issues:
         # reported but rules find nothing: still open a task for human judgement
@@ -793,6 +983,376 @@ def insights(user=Depends(current_user)):
     }
 
 
+# ---------------------------------------------------------------------------
+# Round 3 features: (1) impact preview, (2) claim expiry + renewal, (3) dispute learning
+# ---------------------------------------------------------------------------
+def _require_reviewer(user, what):
+    if user["role"] not in ("manager", "reviewer"):
+        raise HTTPException(403, f"Only a manager or reviewer can {what}")
+
+
+@app.post("/api/blueprint/preview")
+def preview_blueprint(body: BlueprintBody, user=Depends(current_user)):
+    """Dry run: which live posts would newly fail if this blueprint were saved? Writes nothing."""
+    _require_reviewer(user, "preview blueprint changes")
+    ws = user["workspace_id"]
+    payload = _validate_blueprint(body)
+    _PREVIEWS[(ws, user["id"])] = (_payload_hash(payload), db.now())
+    cur = db.current_version(conn, ws)
+    current_bp = db.load_blueprint(conn, cur["id"]) if cur else {"guidelines": [], "terms": [], "claims": [], "palette": [], "version_id": None}
+    cand = {"version_id": None, "guidelines": payload["guidelines"], "terms": payload["terms"],
+            "claims": payload["claims"], "palette": payload["palette"]}
+    rows = conn.execute("SELECT * FROM published WHERE workspace_id=? AND state='Monitoring'", (ws,)).fetchall()
+    affected, cleared = [], []
+    for row in rows:
+        row = dict(row)
+        before = {(i["rule_code"], i["evidence"]) for i in _published_issues(row, current_bp)}
+        after_list = _published_issues(row, cand)
+        new = [i for i in after_list if (i["rule_code"], i["evidence"]) not in before]
+        after = {(i["rule_code"], i["evidence"]) for i in after_list}
+        gone = [b for b in before if b not in after]
+        if new:
+            affected.append({
+                "published_id": row["id"], "title": row["title"],
+                "triage": _triage(new),
+                "new_issues": [{"rule_code": i["rule_code"], "severity": i["severity"],
+                                "evidence": i["evidence"], "cause_clause": i["clause"],
+                                "suggestion": i["suggestion"]} for i in new]})
+        if gone and not new:
+            cleared.append({"published_id": row["id"], "title": row["title"], "issues_cleared": len(gone)})
+    causes = {}
+    for a in affected:
+        for i in a["new_issues"]:
+            causes[i["rule_code"]] = causes.get(i["rule_code"], 0) + 1
+    return {
+        "from_version": cur["version"] if cur else None,
+        "checked_live_posts": len(rows),
+        "newly_failing_posts": len(affected),
+        "estimated_recovery_tasks": len(affected),
+        "causes": [{"rule_code": k, "posts": v} for k, v in sorted(causes.items(), key=lambda x: -x[1])],
+        "affected": affected, "would_clear": cleared,
+        "saved": False,
+        "note": "Preview only. Nothing was saved and no recovery task was opened.",
+    }
+
+
+def _expiry_status(exp, today, horizon):
+    if not exp:
+        return "no_expiry"
+    if exp < today.isoformat():
+        return "expired"
+    if exp <= (today + datetime.timedelta(days=horizon)).isoformat():
+        return "expiring_soon"
+    return "current"
+
+
+def _claims_expiry_data(ws, days):
+    cur = db.current_version(conn, ws)
+    if not cur:
+        return {"claims": [], "horizon_days": days}
+    bp = db.load_blueprint(conn, cur["id"])
+    today = datetime.date.today()
+    out = []
+    for c in bp["claims"]:
+        st = _expiry_status(c.get("expires_on"), today, days)
+        if st == "no_expiry":
+            continue
+        users = [dict(r) for r in conn.execute(
+            "SELECT p.id, p.title, p.state FROM published_links l JOIN published p ON p.id=l.published_id "
+            "WHERE l.ref_type='claim' AND l.ref_key=? AND p.workspace_id=?", (c["claim"], ws))]
+        out.append({"claim": c["claim"], "expires_on": c["expires_on"], "status": st,
+                    "days_left": (datetime.date.fromisoformat(c["expires_on"]) - today).days,
+                    "live_posts_using_it": users})
+    out.sort(key=lambda x: x["expires_on"])
+    return {"today": today.isoformat(), "horizon_days": days, "claims": out}
+
+
+@app.get("/api/claims/expiry")
+def claims_expiry(days: int = 30, user=Depends(current_user)):
+    return _claims_expiry_data(user["workspace_id"], days)
+
+
+def _scan_expiry(ws, days, actor_id, source="manual"):
+    """Notify owners of expiring/expired claims and re-check affected live posts.
+    Notices are de-duplicated per claim, post and day so the scheduler never spams."""
+    info = _claims_expiry_data(ws, days)
+    today = datetime.date.today().isoformat()
+    notified, rechecked = [], []
+    for c in info["claims"]:
+        if c["status"] not in ("expired", "expiring_soon"):
+            continue
+        for p in c["live_posts_using_it"]:
+            owner = conn.execute(
+                "SELECT s.creator_id AS created_by FROM published p JOIN submissions s ON s.id=p.submission_id WHERE p.id=?",
+                (p["id"],)).fetchone()
+            verb = "expired on" if c["status"] == "expired" else "expires on"
+            msg = (f"Claim \"{c['claim']}\" {verb} {c['expires_on']}; live post \"{p['title']}\" uses it. "
+                   f"Renew the claim or fix the post.")
+            dup = conn.execute("SELECT 1 FROM notifications WHERE workspace_id=? AND message=? AND date(created_at,'unixepoch','localtime')=?",
+                               (ws, msg, today)).fetchone()
+            if not dup:
+                conn.execute(
+                    "INSERT INTO notifications (workspace_id, user_id, kind, message, created_at) VALUES (?,?,?,?,?)",
+                    (ws, owner["created_by"] if owner else None, "claim_expiry", msg, db.now()))
+                notified.append({"post": p["title"], "claim": c["claim"], "status": c["status"]})
+            if c["status"] == "expired" and p["state"] == "Monitoring":
+                row = dict(conn.execute("SELECT * FROM published WHERE id=?", (p["id"],)).fetchone())
+                tid, created, _ = _recheck_published(row, f"Claim expired: {c['claim']}")
+                if created:
+                    rechecked.append({"post": p["title"], "recovery_task_id": tid})
+    db.audit(conn, ws, actor_id, "claims.expiry_scan", "claims", 0,
+             f"{source}: {len(notified)} notices, {len(rechecked)} recoveries")
+    conn.commit()
+    return {"notices": notified, "recovery_opened": rechecked}
+
+
+@app.post("/api/claims/expiry/scan")
+def claims_expiry_scan(days: int = 30, user=Depends(current_user)):
+    _require_reviewer(user, "run the expiry scan")
+    return _scan_expiry(user["workspace_id"], days, user["id"])
+
+
+def _scheduler_loop(hours):
+    import threading, time
+    while True:
+        try:
+            for w in conn.execute("SELECT id FROM workspaces").fetchall():
+                with _db_lock:
+                    _scan_expiry(w["id"], 30, None, source="scheduled")
+        except Exception as e:  # never let the scheduler die
+            print("expiry scheduler error:", e)
+        time.sleep(max(60, hours * 3600))
+
+
+@app.get("/api/notifications")
+def notifications(user=Depends(current_user)):
+    rows = conn.execute(
+        "SELECT * FROM notifications WHERE workspace_id=? AND (user_id IS NULL OR user_id=? OR ?) "
+        "ORDER BY created_at DESC LIMIT 50",
+        (user["workspace_id"], user["id"], 1 if user["role"] in ("manager", "reviewer") else 0)).fetchall()
+    return [dict(r) for r in rows]
+
+
+class RenewBody(BaseModel):
+    claim: str
+    new_expires_on: str
+    evidence_note: str = ""
+
+
+@app.post("/api/claims/renew")
+def renew_claim(body: RenewBody, user=Depends(current_user)):
+    """Human-reviewed renewal: saves a new blueprint version with the claim's date extended,
+    then re-checks live posts (closing the gap that expiry opened)."""
+    _require_reviewer(user, "renew a claim")
+    try:
+        datetime.date.fromisoformat(body.new_expires_on)
+    except ValueError:
+        raise HTTPException(400, "new_expires_on must be YYYY-MM-DD")
+    if not body.evidence_note.strip():
+        raise HTTPException(400, "Say what evidence supports renewing this claim")
+    ws = user["workspace_id"]
+    cur = db.current_version(conn, ws)
+    bp = db.load_blueprint(conn, cur["id"])
+    if body.claim not in [c["claim"] for c in bp["claims"]]:
+        raise HTTPException(404, "Claim not in the current library")
+    claims = [{"claim": c["claim"], "risk": c["risk"],
+               "expires_on": body.new_expires_on if c["claim"] == body.claim else c["expires_on"]}
+              for c in bp["claims"]]
+    nb = BlueprintBody(
+        note=f"Renewed claim \"{body.claim}\" to {body.new_expires_on}: {body.evidence_note}",
+        guidelines=[{"title": g["title"], "body": g["body"]} for g in bp["guidelines"]],
+        terms=[{"term": t["term"], "kind": t["kind"], "replacement": t["replacement"], "note": t["note"]} for t in bp["terms"]],
+        claims=claims, palette=bp["palette"])
+    return _save_blueprint(ws, nb, user["id"])
+
+
+@app.get("/api/guideline-suggestions")
+def guideline_suggestions(user=Depends(current_user)):
+    """Dispute learning: aggregate dispute reasons and reviewer decisions per rule and propose
+    clearer wording. Proposals are drafts; a human must approve before any guideline changes."""
+    ws = user["workspace_id"]
+    rows = conn.execute(
+        "SELECT i.rule_code, i.category, i.clause, i.suggestion, i.status, i.dispute_reason "
+        "FROM issues i JOIN submissions s ON s.id=i.submission_id WHERE s.workspace_id=?", (ws,)).fetchall()
+    by = {}
+    for r in rows:
+        d = by.setdefault(r["rule_code"], {"rule_code": r["rule_code"], "category": r["category"],
+                                           "clause": r["clause"], "total": 0, "disputed": 0,
+                                           "accepted": 0, "reasons": []})
+        d["total"] += 1
+        d["disputed"] += r["status"] == "disputed"
+        d["accepted"] += r["status"] == "accepted"
+        if r["dispute_reason"]:
+            d["reasons"].append(r["dispute_reason"].strip())
+    changes = conn.execute(
+        "SELECT a.reason FROM approvals a JOIN submissions s ON s.id=a.submission_id "
+        "WHERE s.workspace_id=? AND a.action IN ('request_changes','reject') AND a.reason!=''", (ws,)).fetchall()
+    change_reasons = list(dict.fromkeys(r["reason"].strip() for r in changes))[:5]
+    out = []
+    for d in by.values():
+        if d["disputed"] < 1:
+            continue
+        rate = d["disputed"] / d["total"]
+        reasons = list(dict.fromkeys(d["reasons"]))
+        words = {}
+        for rs in reasons:
+            for w in set(re.findall(r"[a-z']{4,}", rs.lower())):
+                words[w] = words.get(w, 0) + 1
+        common = [w for w, n in sorted(words.items(), key=lambda x: -x[1]) if n >= 2][:5]
+        out.append({
+            "rule_code": d["rule_code"], "clause": d["clause"],
+            "times_flagged": d["total"], "times_disputed": d["disputed"],
+            "dispute_rate": round(rate, 2),
+            "confidence": "strong" if d["disputed"] >= 2 else "weak (one dispute)",
+            "dispute_reasons": reasons[:8], "common_words": common,
+            "proposed_wording": (
+                f"Clarification for rule {d['rule_code']}: {d['clause']} "
+                f"Writers have questioned this {d['disputed']} time(s), saying: "
+                + "; ".join(f'\"{r}\"' for r in reasons[:3])
+                + (f". Reviewers asked for changes citing: " + "; ".join(f'\"{r}\"' for r in change_reasons[:2]) if change_reasons else "")
+                + ". Add an explicit example of what is and is not allowed, and name who can grant an exception."),
+            "reviewer_change_reasons": change_reasons,
+            "status": "draft - needs human approval",
+        })
+    out.sort(key=lambda x: (-x["times_disputed"], -x["dispute_rate"]))
+    return {"suggestions": out, "reviewer_change_requests_seen": len(changes)}
+
+
+class ClarifyBody(BaseModel):
+    rule_code: str
+    wording: str
+
+
+@app.post("/api/guideline-suggestions/approve")
+def approve_clarification(body: ClarifyBody, user=Depends(current_user)):
+    """A human approves (and may edit) the wording; only then is a new blueprint version saved."""
+    _require_reviewer(user, "approve a guideline clarification")
+    if not body.wording.strip():
+        raise HTTPException(400, "Wording is empty")
+    ws = user["workspace_id"]
+    cur = db.current_version(conn, ws)
+    bp = db.load_blueprint(conn, cur["id"])
+    guidelines = [{"title": g["title"], "body": g["body"]} for g in bp["guidelines"]]
+    guidelines.append({"title": f"Clarification: {body.rule_code}", "body": body.wording.strip()})
+    nb = BlueprintBody(
+        note=f"Clarified {body.rule_code} from dispute feedback (approved by {user['name']})",
+        guidelines=guidelines,
+        terms=[{"term": t["term"], "kind": t["kind"], "replacement": t["replacement"], "note": t["note"]} for t in bp["terms"]],
+        claims=[{"claim": c["claim"], "risk": c["risk"], "expires_on": c["expires_on"]} for c in bp["claims"]],
+        palette=bp["palette"])
+    return _save_blueprint(ws, nb, user["id"])
+
+
+# ---------------------------------------------------------------------------
+# Demo story: fictional data so every feature can be seen in a minute.
+# ---------------------------------------------------------------------------
+def _story_loaded(ws):
+    return bool(conn.execute("SELECT 1 FROM events WHERE workspace_id=? AND action='demo.story_loaded'", (ws,)).fetchone())
+
+
+def _load_demo_story(ws):
+    users = {r["role"]: dict(r) for r in conn.execute("SELECT * FROM users WHERE workspace_id=?", (ws,))}
+    cr, mg = users["creator"], users["manager"]
+    today = datetime.date.today()
+    soon = (today + datetime.timedelta(days=12)).isoformat()
+    cur = db.current_version(conn, ws)
+    bp = db.load_blueprint(conn, cur["id"])
+
+    def bp_body(note, claims):
+        return BlueprintBody(
+            note=note,
+            guidelines=[{"title": g["title"], "body": g["body"]} for g in bp["guidelines"]],
+            terms=[{"term": t["term"], "kind": t["kind"], "replacement": t["replacement"], "note": t["note"]} for t in bp["terms"]],
+            claims=claims, palette=bp["palette"])
+    base_claims = [{"claim": c["claim"], "risk": c["risk"], "expires_on": c["expires_on"]} for c in bp["claims"]]
+    ship = {"claim": "Free shipping on orders over $50", "risk": "medium", "expires_on": soon}
+    _save_blueprint(ws, bp_body("Demo: add a short-lived shipping claim", base_claims + [ship]), mg["id"])
+
+    def publish_post(title, text, url):
+        sid = create_submission(SubmissionBody(title=title, channel="social", text=text), user=cr)["id"]
+        res = check_submission(sid, user=cr)
+        if any(i["severity"] == "high" for i in res["issues"]):
+            raise RuntimeError("demo post has high issues: " + title)
+        decide(sid, DecisionBody(action="approve", reason="Demo approval"), user=mg)
+        return publish(sid, PublishBody(url=url), user=cr)["published_id"]
+
+    publish_post("Welcome post", "Hello everyone! Our new brand guide is live. Read it before you publish.",
+                 "https://example.test/demo/welcome")
+    publish_post("Shipping post", "Hello everyone! Free shipping on orders over $50. Order today.",
+                 "https://example.test/demo/shipping")
+    publish_post("Reach post", "Hello everyone! Used by teams in 12 countries. Join them.",
+                 "https://example.test/demo/reach")
+    # a guideline change that breaks the Reach post -> recovery task opens by itself
+    without = [c for c in base_claims if c["claim"] != "Used by teams in 12 countries"] + [ship]
+    _save_blueprint(ws, bp_body("Demo: legal withdrew the 12-countries claim", without), mg["id"])
+    # writers dispute the same rule twice -> dispute learning has data
+    sid = create_submission(SubmissionBody(title="Community greeting", channel="social",
+                                           text="Hey guys, welcome to the community. Hey guys, say hi."), user=cr)["id"]
+    res = check_submission(sid, user=cr)
+    for i in [x for x in res["issues"] if x["rule_code"] == "TERM_BANNED"][:2]:
+        dispute_issue(i["id"], IssueAction(reason="Our community uses this casual greeting"), user=cr)
+    db.audit(conn, ws, mg["id"], "demo.story_loaded", "workspace", ws, "fictional demo data")
+    conn.commit()
+
+
+@app.post("/api/demo/load")
+def demo_load(user=Depends(current_user)):
+    _require_reviewer(user, "load the demo story")
+    if _story_loaded(user["workspace_id"]):
+        raise HTTPException(409, "The demo story is already loaded in this workspace")
+    _load_demo_story(user["workspace_id"])
+    return {"loaded": True, "note": "Fictional demo data. Nothing was published anywhere."}
+
+
+@app.get("/api/demo/status")
+def demo_status():
+    row = conn.execute("SELECT id FROM workspaces ORDER BY id LIMIT 1").fetchone()
+    return {"story_loaded": bool(row and _story_loaded(row["id"]))}
+
+
+class AiToneBody(BaseModel):
+    items: list = []     # [{clause, evidence, suggestion}] produced in the browser by Puter AI
+    provider: str = "puter"
+
+
+@app.post("/api/submissions/{sid}/ai-tone")
+def submit_ai_tone(sid: int, body: AiToneBody, user=Depends(current_user)):
+    """Accept tone findings produced by a browser-side model (Puter, user-pays). The model output
+    is untrusted: evidence must be quoted from the draft, otherwise the item is dropped; the clause
+    must quote a guideline, otherwise the finding is stored as Uncertain for a human. AI findings
+    are medium severity, so they never auto-approve or auto-block."""
+    sub = _get_submission(sid, user)
+    if sub["state"] not in ("Draft", "In Review"):
+        raise HTTPException(400, "Only drafts or in-review content can get an AI tone review")
+    cur = db.current_version(conn, user["workspace_id"])
+    bp = db.load_blueprint(conn, cur["id"])
+    guidelines = " ".join(g["body"] for g in bp["guidelines"]).lower()
+    text = (sub.get("text") or "")
+    kept, dropped = 0, 0
+    conn.execute("UPDATE issues SET status='resolved' WHERE submission_id=? AND source='ai' AND status IN ('open','accepted')", (sid,))
+    for it in body.items[:10]:
+        if not isinstance(it, dict):
+            dropped += 1
+            continue
+        evidence = str(it.get("evidence") or "").strip()[:400]
+        clause = str(it.get("clause") or "").strip()[:400]
+        if not evidence or evidence.lower() not in text.lower():
+            dropped += 1          # not a quote from the draft: treat as invented
+            continue
+        cited = bool(clause) and clause.lower() in guidelines
+        conn.execute(
+            "INSERT INTO issues (submission_id, rule_code, category, severity, evidence, clause, suggestion, "
+            "source, uncertain, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (sid, "AI_TONE", "tone", "medium", f'Quoted from the draft: "{evidence}"',
+             clause if cited else (clause or "No guideline clause cited"),
+             str(it.get("suggestion") or "")[:400], "ai", 0 if cited else 1, db.now()))
+        kept += 1
+    db.audit(conn, user["workspace_id"], user["id"], "submission.ai_tone", "submission", sid,
+             f"provider={body.provider} kept={kept} dropped={dropped}")
+    conn.commit()
+    return {"kept": kept, "dropped_not_quoted_from_draft": dropped, "issues": _issues_for(sid)}
+
+
 @app.get("/api/audit")
 def audit_trail(user=Depends(current_user)):
     rows = conn.execute(
@@ -803,8 +1363,22 @@ def audit_trail(user=Depends(current_user)):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "ai_layer": ai.configured()}
+    return {"ok": True, "version": app.version, "ai_layer": ai.configured()}
 
+
+if os.environ.get("REBRAND_DEMO_STORY") == "1":
+    _ws = conn.execute("SELECT id FROM workspaces ORDER BY id LIMIT 1").fetchone()
+    if _ws and not _story_loaded(_ws["id"]):
+        try:
+            _load_demo_story(_ws["id"])
+        except Exception as e:
+            # demo data must never take the app down at boot
+            print("ReBrand: demo story failed to load:", e)
+            conn.rollback()
+
+_hours = float(os.environ.get("REBRAND_SCAN_HOURS", "0") or 0)
+if _hours > 0:
+    threading.Thread(target=_scheduler_loop, args=(_hours,), daemon=True).start()
 
 # static frontend
 static_dir = os.path.join(BASE, "static")

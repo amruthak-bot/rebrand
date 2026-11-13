@@ -155,6 +155,14 @@ CREATE TABLE IF NOT EXISTS recovery_tasks (
   correction_confirmed_by INTEGER REFERENCES users(id),
   closed_at REAL
 );
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  workspace_id INTEGER NOT NULL,
+  user_id INTEGER,
+  kind TEXT NOT NULL,
+  message TEXT NOT NULL,
+  created_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   workspace_id INTEGER NOT NULL,
@@ -178,13 +186,21 @@ def connect():
 
 def init():
     conn = connect()
-    conn.executescript(SCHEMA)
+    journal = os.environ.get("REBRAND_JOURNAL", "").upper()
+    if journal in ("DELETE", "TRUNCATE", "WAL"):
+        # Apply the requested journal mode BEFORE the schema script (which says WAL);
+        # WAL is unsafe on network volumes, so never enter it when overridden.
+        conn.execute("PRAGMA journal_mode=" + journal)
+        conn.executescript(SCHEMA.replace("PRAGMA journal_mode=WAL;", ""))
+    else:
+        conn.executescript(SCHEMA)
     # Upgrade databases created by earlier Round 2 builds without deleting demo data.
     for table, column, declaration in [
         ("submissions", "checked_fingerprint", "TEXT DEFAULT ''"),
         ("submissions", "approved_fingerprint", "TEXT DEFAULT ''"),
         ("recovery_tasks", "correction_note", "TEXT DEFAULT ''"),
         ("recovery_tasks", "correction_confirmed_by", "INTEGER"),
+        ("sessions", "revoked_at", "REAL"),
     ]:
         present = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
         if column not in present:

@@ -32,6 +32,15 @@ def user_for_token(conn, token: str):
     if not token:
         return None
     row = conn.execute(
-        "SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=?", (token,)
+        "SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id "
+        "WHERE s.token=? AND s.created_at > ? AND (s.revoked_at IS NULL)",
+        (token, db.now() - 7 * 86400)
     ).fetchone()
     return dict(row) if row else None
+
+
+def revoke_session(conn, token: str) -> None:
+    """Sign out: the token stops working immediately."""
+    if token:
+        conn.execute("UPDATE sessions SET revoked_at=? WHERE token=? AND revoked_at IS NULL",
+                     (db.now(), token))
