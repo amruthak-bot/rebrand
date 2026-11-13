@@ -6,7 +6,8 @@ import json
 import sys
 import urllib.request
 
-BASE = "http://127.0.0.1:8000"
+import os
+BASE = os.environ.get("REBRAND_BASE", "http://127.0.0.1:8000")
 PASS = []
 
 
@@ -89,7 +90,7 @@ def main():
     pid = p["published_id"]
 
     # 6. guideline/claim change: drop the winter offer claim from the library -> live item fails re-check
-    call("POST", "/api/blueprint", token=manager, body={
+    bp_change = {
         "note": "Winter offer ended",
         "guidelines": [
             {"title": "Voice and tone", "body": "Plain, confident, inclusive. Never 'guys'."},
@@ -97,7 +98,11 @@ def main():
         ],
         "terms": [{"term": "guys", "kind": "banned", "replacement": "everyone", "note": "inclusive"}],
         "claims": [{"claim": "Rated 4.8/5 by 2,000+ customers", "risk": "high", "expires_on": None}],
-        "palette": ["#1a56db", "#ffffff"]})
+        "palette": ["#1a56db", "#ffffff"]}
+    # saving without a matching preview is refused (409); preview then save works
+    call("POST", "/api/blueprint", token=manager, body=bp_change, expect=409)
+    call("POST", "/api/blueprint/preview", token=manager, body=bp_change)
+    call("POST", "/api/blueprint", token=manager, body=bp_change)
     tasks = call("GET", "/api/recovery", token=creator)
     mine = [t for t in tasks if t["published_id"] == pid and t["state"] != "closed"]
     assert mine, "expected a recovery task from the blueprint-change re-check"
