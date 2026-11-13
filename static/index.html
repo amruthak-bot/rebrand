@@ -3,20 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ReBrand — Check a post before it goes live</title>
+<title>ReBrand: Check a post before it goes live</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Fraunces:ital,opsz,wght@1,9..144,500;1,9..144,600&family=Caveat:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 </head>
-<body class="text-[#22301f] min-h-screen" style="background:#f6f1e7;font-family:Inter,system-ui,sans-serif">
-<header style="background:#17573f" class="text-[#f6f1e7] px-6 py-4">
-  <div class="max-w-5xl mx-auto flex items-center justify-between gap-4">
-    <div class="flex items-center gap-3">
-      <span class="inline-flex items-center justify-center w-11 h-11 rounded-full text-2xl" style="background:#f6f1e7;color:#17573f" aria-hidden="true">✓</span>
+<body class="min-h-screen" style="background:#f2efe7;color:#1f1c16;font-family:'Space Grotesk',system-ui,sans-serif">
+
+<header style="border-bottom:1px solid #d6cfbb">
+  <div class="max-w-5xl mx-auto px-5 sm:px-6 py-4 flex items-end justify-between gap-4">
+    <div class="flex items-baseline gap-3">
+      <span class="mono-label" style="color:#c4341d">●</span>
       <div>
-        <h1 class="text-2xl leading-none" style="font-family:Fraunces,Georgia,serif;font-weight:700">ReBrand</h1>
-        <p class="text-sm mt-1" style="color:#cfe3d6">Check a post before it goes live. Fix it after, if it goes wrong.</p>
+        <h1 class="text-2xl leading-none" style="font-weight:700;letter-spacing:-.02em">ReBrand</h1>
+        <p class="mono-label mt-1" style="color:#6b6557">Check a post before it goes live. Fix it after, if it goes wrong.</p>
       </div>
     </div>
     <div id="whoami" class="text-sm text-right"></div>
@@ -24,36 +25,51 @@
 </header>
 
 <main class="max-w-5xl mx-auto p-4 sm:p-6">
-  <section id="login-view" class="max-w-md mx-auto rounded-3xl shadow-sm p-7 mt-8" style="background:#fffdf8;border:1px solid #e5dcc6">
-    <h2 class="text-2xl" style="font-family:Fraunces,Georgia,serif;font-weight:700">Sign in</h2>
-    <p class="text-sm mt-1" style="color:#5c6b58">One account, one job: check posts before they go live.</p>
+  <section id="login-view" class="max-w-md mx-auto plate p-7 mt-10">
+    <p class="mono-label" style="color:#c4341d">001 · Sign in</p>
+    <h2 class="display-lg mt-2">One account.<br><span class="accent-italic">One job.</span></h2>
+    <p class="help">Check posts <span class="hl">before</span> they go live.</p>
     <label class="block text-sm font-medium mt-5 mb-1" for="email">Email</label>
-    <input id="email" class="w-full border rounded-xl px-3 py-2.5" style="border-color:#cbbf9f;background:#fff" value="creator@demo.test">
+    <input id="email" class="field" value="creator@demo.test">
     <label class="block text-sm font-medium mt-4 mb-1" for="password">Password</label>
-    <input id="password" type="password" class="w-full border rounded-xl px-3 py-2.5" style="border-color:#cbbf9f;background:#fff" value="creator123">
-    <button onclick="login()" class="w-full rounded-full py-3 font-semibold mt-6 text-white" style="background:#17573f">Sign in</button>
-    <p class="text-xs mt-4" style="color:#5c6b58">Demo accounts: creator@ / manager@ / reviewer@demo.test — passwords creator123 / manager123 / reviewer123.</p>
-    <p id="login-err" class="text-sm mt-2" style="color:#b3402e"></p>
+    <input id="password" type="password" class="field" value="creator123">
+    <button onclick="login()" class="btn-primary w-full mt-6">Sign in →</button>
+    <p class="mono-note mt-4">Demo accounts: creator@ / manager@ / reviewer@demo.test. Passwords: creator123 / manager123 / reviewer123.</p>
+    <div class="mt-5 plate-inset p-4 text-sm">
+      <p class="mono-label mb-2" style="color:#c4341d">Judges: quick start</p>
+      <b>Fictional demo accounts, no setup.</b> Sign in as:
+      <div class="flex gap-2 flex-wrap mt-2">
+        <button onclick="quickLogin('creator')" class="btn-dark">Creator: writes posts</button>
+        <button onclick="quickLogin('manager')" class="btn-dark">Manager: approves, plans</button>
+      </div>
+      <p class="mt-2" style="color:#6b6557">Suggested 3-minute path: Creator: New post, "Fill in a sample", Check. Then Manager: Review, approve, Live posts. Then Plan ahead.</p>
+    </div>
+    <p id="login-err" class="text-sm mt-2" style="color:#a32b16"></p>
   </section>
 
   <section id="app-view" class="hidden">
-    <div class="rounded-3xl p-5 sm:p-6 mt-2" style="background:#fffdf8;border:1px solid #e5dcc6">
-      <h2 class="text-2xl sm:text-3xl" style="font-family:Fraunces,Georgia,serif;font-weight:700">Three steps. No surprises.</h2>
-      <ol class="grid sm:grid-cols-3 gap-3 mt-4 text-sm">
-        <li class="rounded-2xl p-4" style="background:#e7efe8"><b class="text-lg" style="font-family:Fraunces,Georgia,serif">1 · Write</b><br>Write your post, or paste it in.</li>
-        <li class="rounded-2xl p-4" style="background:#fdf3d7"><b class="text-lg" style="font-family:Fraunces,Georgia,serif">2 · Check</b><br>ReBrand shows what is wrong, and why, in plain words.</li>
-        <li class="rounded-2xl p-4" style="background:#e7efe8"><b class="text-lg" style="font-family:Fraunces,Georgia,serif">3 · Publish</b><br>A person approves it. Then it goes live.</li>
+    <div class="mt-4 mb-2" style="border-bottom:1px solid #d6cfbb;padding-bottom:1.5rem;position:relative">
+      <div class="stamp">CodeNexus<br><b>Round 3</b> · final</div>
+      <p class="mono-label" style="color:#c4341d">ReBrand: how it works</p>
+      <h2 class="display-xl mt-2">Three steps.<br><span class="accent-italic">No surprises.</span></h2>
+      <ol class="grid sm:grid-cols-3 gap-0 mt-6 text-sm steps-row">
+        <li class="step"><span class="ghost">01</span><span class="mono-label" style="color:#c4341d">01</span><b class="block text-lg mt-1">Write</b>Write your post, or paste it in.</li>
+        <li class="step"><span class="ghost">02</span><span class="mono-label" style="color:#c4341d">02</span><b class="block text-lg mt-1">Check</b>ReBrand shows what is wrong, and why, in plain words.</li>
+        <li class="step"><span class="ghost">03</span><span class="mono-label" style="color:#c4341d">03</span><b class="block text-lg mt-1">Publish</b>A person approves it. Then it goes live.</li>
       </ol>
-      <button onclick="showTab('submit')" class="rounded-full px-6 py-3 font-semibold text-white mt-5" style="background:#17573f">Write a new post →</button>
+      <div class="cta-wrap mt-6"><button onclick="showTab('submit')" class="btn-primary">Write a new post →</button><span class="cta-note hand">start here<svg width="46" height="30" viewBox="0 0 46 30" style="display:inline-block;vertical-align:middle;margin-left:.2rem"><path d="M44 6 C 30 4, 14 8, 6 22 M 6 22 l -3 -7 M 6 22 l 7 -2" stroke="#c4341d" stroke-width="2.4" fill="none" stroke-linecap="round"/></svg></span></div>
     </div>
 
     <nav class="flex gap-2 my-5 flex-wrap" role="tablist" aria-label="Sections">
+      <button class="tab-btn" data-tab="whatsnew" onclick="showTab('whatsnew')">What's new in Round 3</button>
       <button class="tab-btn" data-tab="blueprint" onclick="showTab('blueprint')">Brand rules</button>
       <button class="tab-btn" data-tab="submit" onclick="showTab('submit')">New post</button>
       <button class="tab-btn" data-tab="review" onclick="showTab('review')">Review</button>
       <button class="tab-btn" data-tab="published" onclick="showTab('published')">Live posts</button>
       <button class="tab-btn" data-tab="recovery" onclick="showTab('recovery')">Posts to fix</button>
+      <button class="tab-btn" data-tab="plan" onclick="showTab('plan')">Plan ahead</button>
       <button class="tab-btn" data-tab="insights" onclick="showTab('insights')">Simple numbers</button>
+      <button class="tab-btn" data-tab="activity" onclick="showTab('activity')">Activity</button>
     </nav>
 
     <div id="ask-box" class="card hidden" style="margin-bottom:1rem">
@@ -67,40 +83,74 @@
       </div>
     </div>
 
+    <section id="tab-whatsnew" class="tab-panel card">
+      <p class="mono-label" style="color:#c4341d">002 · Round 3</p>
+      <h2 class="h2 mt-1">What's new in Round 3</h2>
+      <p class="help">The three improvements we promised after Round 2, and exactly where to see each one. Everything below works in this live build.</p>
+      <div id="whatsnew-body">
+        <div class="plate-inset p-4 mb-3">
+          <p class="mono-label" style="color:#c4341d">01</p>
+          <h3 class="font-semibold mt-1">See the damage before saving a rule change</h3>
+          <p class="text-sm mt-1">Before a new guideline version is saved, ReBrand re-checks every live post against the proposed rules and shows which would newly fail, which rule causes it, and how many fix tasks that means. Nothing is saved until a person confirms.</p>
+          <p class="text-sm mt-1"><b>Try it:</b> Brand rules → change something → "Preview the impact first".</p>
+        </div>
+        <div class="plate-inset p-4 mb-3">
+          <p class="mono-label" style="color:#c4341d">02</p>
+          <h3 class="font-semibold mt-1">Claims that expire, with renewal and owner notices</h3>
+          <p class="text-sm mt-1">Offers and claims have expiry dates. ReBrand scans on a timer, warns the owner of any live post using a claim that is running out, opens a fix task when one expires, and a renewal needs a manager's written evidence.</p>
+          <p class="text-sm mt-1"><b>Try it:</b> Plan ahead → "Free shipping on orders over $50" is expiring soon. Press "Check expiry and notify owners".</p>
+        </div>
+        <div class="plate-inset p-4 mb-3">
+          <p class="mono-label" style="color:#c4341d">03</p>
+          <h3 class="font-semibold mt-1">ReBrand learns from disputes</h3>
+          <p class="text-sm mt-1">When writers keep disputing the same rule, ReBrand groups their reasons and drafts clearer wording. A manager or reviewer edits and approves it; only then does it become a new rules version. No wording changes itself.</p>
+          <p class="text-sm mt-1"><b>Try it:</b> Plan ahead → "Rules writers keep disputing".</p>
+        </div>
+        <div class="plate-inset p-4">
+          <p class="mono-label" style="color:#c4341d">04</p>
+          <h3 class="font-semibold mt-1">Fixed since Round 2</h3>
+          <p class="text-sm mt-1">Demo data no longer vanishes on redeploy (the app reseeds itself). Image posts are now read with OCR and checked like text. Sessions expire after 7 days. New here: one-click judge sign-ins, a demo story, and the Activity tab showing every approval and fix.</p>
+          <p class="text-sm mt-1"><b>Suggested 3-minute path:</b> New post → "Fill in a sample off-brand post" → Check. Then Review → approve. Then Live posts and Plan ahead.</p>
+        </div>
+      </div>
+    </section>
     <section id="tab-blueprint" class="tab-panel card">
-      <h2 class="h2">Your brand rules <span id="bp-version" class="text-sm font-normal" style="color:#5c6b58"></span></h2>
+      <h2 class="h2">Your brand rules <span id="bp-version" class="mono-note"></span></h2>
       <p class="help">These are the rules every post is checked against. Every save makes a new version, and live posts are checked again.</p>
       <div id="bp-current" class="mb-4"></div>
       <details class="mb-2">
-        <summary class="cursor-pointer text-sm font-semibold" style="color:#17573f">Change the rules (manager or reviewer)</summary>
+        <summary class="cursor-pointer text-sm font-semibold link">Change the rules (manager or reviewer)</summary>
         <div class="mt-3 space-y-3">
-          <label class="block text-sm font-medium">Rules, one per line — title: what it means
+          <label class="block text-sm font-medium">Rules, one per line (title: what it means)
             <textarea id="bp-guidelines" rows="4" class="field mt-1"></textarea></label>
-          <label class="block text-sm font-medium">Words — word | banned or preferred | use this instead | note
+          <label class="block text-sm font-medium">Words (word | banned or preferred | use this instead | note)
             <textarea id="bp-terms" rows="3" class="field mt-1"></textarea></label>
-          <label class="block text-sm font-medium">Approved claims — claim | risk | expiry date or blank
+          <label class="block text-sm font-medium">Approved claims (claim | risk | expiry date or blank)
             <textarea id="bp-claims" rows="3" class="field mt-1"></textarea></label>
           <label class="block text-sm font-medium">Brand colours, comma separated
             <input id="bp-palette" class="field mt-1"></label>
           <label class="block text-sm font-medium">Note about this version
             <input id="bp-note" class="field mt-1"></label>
+          <button onclick="previewBlueprint()" class="btn-dark">Preview the impact first</button>
           <button onclick="saveBlueprint()" class="btn-primary">Save new version</button>
+          <div id="bp-preview" class="text-sm mt-2"></div>
           <span id="bp-msg" class="text-sm ml-2"></span>
         </div>
       </details>
       <details>
-        <summary class="cursor-pointer text-sm font-semibold" style="color:#17573f">Add rules from a document (PDF / Word / text)</summary>
+        <summary class="cursor-pointer text-sm font-semibold link">Add rules from a document (PDF / Word / text)</summary>
         <div class="mt-2 flex gap-2 items-center flex-wrap">
           <input type="file" id="bp-file">
           <button onclick="uploadGuideline()" class="btn-dark">Read the document</button>
         </div>
-        <pre id="bp-file-text" class="text-xs rounded-xl p-2 mt-2 max-h-40 overflow-auto" style="background:#f6f1e7"></pre>
+        <pre id="bp-file-text" class="text-xs plate-inset p-2 mt-2 max-h-40 overflow-auto"></pre>
       </details>
     </section>
 
     <section id="tab-submit" class="tab-panel card hidden">
       <h2 class="h2">Write a new post</h2>
-      <p class="help">Paste your post below. ReBrand checks it against your brand rules — nothing is published until a person approves it.</p>
+      <p class="help">Paste your post below. ReBrand checks it against your brand rules. Nothing is published until a person approves it.</p>
+      <button onclick="fillSample()" class="btn-dark mb-3">Fill in a sample off-brand post</button>
       <div class="grid gap-3 max-w-2xl">
         <label class="block text-sm font-medium">Title
           <input id="sub-title" placeholder="e.g. Winter launch post" class="field mt-1"></label>
@@ -111,27 +161,27 @@
               <option value="document">Document</option>
               <option value="image">Image</option>
             </select></label>
+          <label class="block text-sm font-medium">Where will it go?
+            <select id="sub-channel" class="field mt-1">
+              <option>web</option><option>social</option><option>email</option><option>print</option>
+            </select></label>
         </div>
         <label class="block text-sm font-medium">Your post
           <textarea id="sub-text" rows="6" placeholder="Write or paste your post here…" class="field mt-1"></textarea></label>
-        <label id="image-fields" class="block text-sm font-medium hidden">Describe the image <span class="font-normal" style="color:#5c6b58">(needed for images)</span>
+        <label class="block text-sm font-medium">Describe the image, if there is one <span class="font-normal" style="color:#6b6557">(needed for images)</span>
           <input id="sub-alt" placeholder="e.g. A photo of our winter offer poster" class="field mt-1"></label>
-        <details>
-          <summary class="cursor-pointer text-sm font-semibold">Upload a file or choose a channel</summary>
-          <div class="mt-2 space-y-3">
-            <label class="block text-sm">Image or document<input type="file" id="sub-file" class="block mt-1"></label>
-            <label class="block text-sm">Where will it go?
-              <select id="sub-channel" class="field mt-1"><option>web</option><option>social</option><option>email</option><option>print</option></select>
-            </label>
-          </div>
-        </details>
+        <div class="flex gap-2 items-center flex-wrap">
+          <input type="file" id="sub-file">
+          <span class="text-xs" style="color:#6b6557">Optional: upload an image or document.</span>
+        </div>
         <div class="flex gap-2 flex-wrap">
-          <button onclick="createSubmission(true)" class="btn-primary">✓ Check my post</button>
+          <button onclick="createSubmission(true)" class="btn-primary">Check my post →</button>
           <button onclick="createSubmission()" class="btn-outline">Save as a draft</button>
         </div>
-        <p class="text-xs" style="color:#5c6b58">Checking also compares older posts on the same topic. <button onclick="memoryCheck()" class="link">Compare with older posts first</button></p>
+        <button onclick="memoryCheck()" class="btn-amber">Compare with older posts</button>
+        <p class="text-xs" style="color:#6b6557">This looks at posts you already published on the same topic, and shows when they went live and what they said, so you can update anything that has changed.</p>
         <div id="memory-result" aria-live="polite"></div>
-        <div id="sub-result" role="status"></div>
+        <div id="sub-result"></div>
       </div>
     </section>
 
@@ -149,36 +199,135 @@
 
     <section id="tab-recovery" class="tab-panel card hidden">
       <h2 class="h2">Posts to fix</h2>
-      <p class="help">Live posts that went wrong. Each one is tracked until it is fixed and checked again — and a person approves every step.</p>
+      <p class="help">Live posts that went wrong. Each one is tracked until it is fixed and checked again. A person approves every step.</p>
       <div id="recovery-list" class="space-y-3"></div>
     </section>
 
+    <section id="tab-plan" class="tab-panel card hidden">
+      <h2 class="h2">Plan ahead</h2>
+      <p class="help">Claims that are about to expire, and rules writers keep disputing. A manager or reviewer approves every change.</p>
+      <div id="plan-demo" class="mb-3"></div>
+      <h3 class="font-semibold mt-3">Claims running out</h3>
+      <div id="plan-claims" class="mt-2"></div>
+      <button onclick="runExpiryScan()" class="btn-dark mt-2">Check expiry and notify owners</button>
+      <div id="plan-scan" class="text-sm mt-2"></div>
+      <h3 class="font-semibold mt-5">Notices</h3>
+      <div id="plan-notes" class="mt-2 text-sm"></div>
+      <h3 class="font-semibold mt-5">Rules writers keep disputing</h3>
+      <div id="plan-suggest" class="mt-2"></div>
+    </section>
     <section id="tab-insights" class="tab-panel card hidden">
       <h2 class="h2">Simple numbers</h2>
       <p class="help">What keeps going wrong, and how fast it gets fixed. No charts you need a manual for.</p>
       <div id="insights-body"></div>
     </section>
+    <section id="tab-activity" class="tab-panel card hidden">
+      <h2 class="h2">Activity</h2>
+      <p class="help">Every check, approval, publication and fix, with who did it and when. This is the audit trail behind "a person approves every step".</p>
+      <div id="activity-body" class="text-sm"></div>
+    </section>
+
   </section>
 </main>
+<footer class="footer-band">
+  <div class="max-w-5xl mx-auto px-5 sm:px-6 py-8">
+    <div class="flex items-end justify-between flex-wrap gap-4">
+      <p class="word">ReBrand</p>
+      <p class="mono-label" style="color:#a79b83">CodeNexus India 2026 · Round 3 · Team RASHI INNOVATORS</p>
+    </div>
+    <div class="rule mt-5 pt-3 flex justify-between flex-wrap gap-3">
+      <p class="mono-note" style="color:#a79b83">Check a post before it goes live. Fix it after, if it goes wrong.</p>
+      <p class="mono-note" style="color:#a79b83">Demo build · fictional data · a person approves every step</p>
+    </div>
+  </div>
+</footer>
 
 <style>
-.card { background:#fffdf8; border:1px solid #e5dcc6; border-radius:1.5rem; padding:1.5rem; box-shadow:0 1px 2px rgba(34,48,31,.06); }
-.h2 { font-family:Fraunces,Georgia,serif; font-weight:700; font-size:1.5rem; line-height:1.2; }
-.help { font-size:.875rem; color:#5c6b58; margin:.35rem 0 1rem; }
-.field { width:100%; border:1px solid #cbbf9f; border-radius:.75rem; padding:.6rem .8rem; background:#fff; }
-.btn-primary { background:#17573f; color:#fff; border-radius:999px; padding:.7rem 1.4rem; font-weight:600; }
-.btn-outline { background:transparent; color:#17573f; border:2px solid #17573f; border-radius:999px; padding:.7rem 1.4rem; font-weight:600; }
-.btn-dark { background:#22301f; color:#fff; border-radius:999px; padding:.45rem 1rem; font-size:.875rem; }
-.btn-amber { background:#b7791f; color:#fff; border-radius:999px; padding:.7rem 1.4rem; font-weight:600; text-align:left; }
-.tab-btn { padding:.55rem 1rem; border-radius:999px; background:#fffdf8; border:1px solid #e5dcc6; font-size:.875rem; font-weight:600; }
-.tab-btn.active { background:#17573f; color:#fff; border-color:#17573f; }
-.badge { font-size:.7rem; padding:.15rem .5rem; border-radius:999px; background:#e7efe8; margin-right:.3rem; font-weight:600; }
-.sev-high { border-left:5px solid #b3402e; }
-.sev-medium { border-left:5px solid #b7791f; }
-.sev-low { border-left:5px solid #17573f; }
-.link { color:#17573f; text-decoration:underline; }
-button:disabled { opacity:.5; cursor:not-allowed; }
+.mono-label { font-family:'IBM Plex Mono',monospace; font-size:.68rem; letter-spacing:.14em; text-transform:uppercase; font-weight:600; }
+.mono-note { font-family:'IBM Plex Mono',monospace; font-size:.72rem; color:#6b6557; }
+.display-xl { font-weight:700; letter-spacing:-.025em; font-size:3.1rem; line-height:1.02; }
+.display-lg { font-weight:700; letter-spacing:-.02em; font-size:1.9rem; line-height:1.08; }
+.accent-italic { font-family:Fraunces,Georgia,serif; font-style:italic; font-weight:600; color:#c4341d; text-decoration:underline wavy rgba(196,52,29,.4); text-underline-offset:6px; text-decoration-thickness:2px; }
+.h2 { font-weight:700; letter-spacing:-.02em; font-size:1.5rem; line-height:1.2; }
+.help { font-size:.875rem; color:#6b6557; margin:.35rem 0 1rem; }
+/* paper grain: a faint printed-page tooth over everything */
+body::before { content:""; position:fixed; inset:0; z-index:60; pointer-events:none; opacity:.05; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E"); }
+@keyframes rise { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
+.tab-panel { animation:rise .35s cubic-bezier(.22,.8,.3,1) both; }
+/* layered paper: top highlight + soft deep shadow = cards you could pick up */
+.plate, .card, .steps-row { background:#fbf9f3; border:1px solid #d6cfbb; border-radius:4px; box-shadow:inset 0 1px 0 #ffffff, 0 1px 2px rgba(31,28,22,.06), 0 18px 34px -18px rgba(31,28,22,.22); }
+.plate-inset { background:#fbf9f3; border:1px solid #d6cfbb; border-radius:3px; box-shadow:inset 0 1px 3px rgba(31,28,22,.06); }
+.card { padding:1.5rem; }
+.steps-row { overflow:hidden; }
+.step { padding:1rem 1.1rem; }
+.step + .step { border-left:1px solid #d6cfbb; }
+@media (max-width:640px){ .step + .step { border-left:none; border-top:1px solid #d6cfbb; } }
+.field { width:100%; border:1px solid #c9c2ae; border-radius:3px; padding:.6rem .8rem; background:#fffdf8; font-family:inherit; box-shadow:inset 0 1px 3px rgba(31,28,22,.08); transition:border-color .15s, box-shadow .15s; }
+.field:focus { outline:none; border-color:#c4341d; box-shadow:inset 0 1px 3px rgba(31,28,22,.08), 0 0 0 3px rgba(196,52,29,.16); }
+/* buttons with a physical edge: hover lifts, click presses in */
+.btn-primary { background:#c4341d; color:#fbf9f3; border-radius:3px; padding:.7rem 1.4rem; font-weight:600; letter-spacing:.01em; border:1px solid #a32b16; box-shadow:inset 0 1px 0 rgba(255,255,255,.22), 0 2px 0 #7c2110, 0 8px 16px -8px rgba(196,52,29,.45); transition:transform .12s, box-shadow .12s, background .15s; }
+.btn-primary:hover { background:#d13d22; transform:translateY(-1px); box-shadow:inset 0 1px 0 rgba(255,255,255,.22), 0 3px 0 #7c2110, 0 12px 20px -8px rgba(196,52,29,.5); }
+.btn-primary:active { transform:translateY(1px); box-shadow:inset 0 1px 0 rgba(255,255,255,.12), 0 0 0 #7c2110, 0 4px 8px -6px rgba(196,52,29,.4); }
+.btn-outline { background:transparent; color:#1f1c16; border:1px solid #1f1c16; border-radius:3px; padding:.7rem 1.4rem; font-weight:600; transition:all .13s; }
+.btn-outline:hover { background:#1f1c16; color:#fbf9f3; transform:translateY(-1px); }
+.btn-outline:active { transform:translateY(1px); }
+.btn-dark { background:#1f1c16; color:#fbf9f3; border-radius:3px; padding:.45rem 1rem; font-size:.875rem; border:1px solid #1f1c16; box-shadow:0 2px 0 rgba(31,28,22,.35); transition:all .13s; }
+.btn-dark:hover { background:#c4341d; border-color:#a32b16; transform:translateY(-1px); }
+.btn-dark:active { transform:translateY(1px); box-shadow:none; }
+.btn-amber { background:transparent; color:#7a5c17; border:1px solid #a8832f; border-radius:3px; padding:.7rem 1.4rem; font-weight:600; text-align:left; transition:all .13s; }
+.btn-amber:hover { background:#f5eeda; }
+.tab-btn { padding:.5rem .95rem; border-radius:3px; background:transparent; border:1px solid #d6cfbb; font-family:'IBM Plex Mono',monospace; font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; font-weight:600; color:#1f1c16; transition:all .13s; }
+.tab-btn:hover { border-color:#1f1c16; transform:translateY(-1px); }
+.tab-btn.active { background:#1f1c16; color:#fbf9f3; border-color:#1f1c16; }
+.badge { font-family:'IBM Plex Mono',monospace; font-size:.65rem; letter-spacing:.08em; text-transform:uppercase; padding:.18rem .5rem; border-radius:2px; border:1px solid #d6cfbb; background:transparent; margin-right:.3rem; font-weight:600; }
+.sev-high { border-left:4px solid #c4341d; }
+.sev-medium { border-left:4px solid #a8832f; }
+.sev-low { border-left:4px solid #8a8578; }
+.link { color:#1f1c16; text-decoration:underline; text-underline-offset:2px; transition:color .13s; }
+.link:hover { color:#c4341d; text-decoration-style:wavy; text-decoration-color:rgba(196,52,29,.6); }
+/* dynamic cards created by app.js: same layered paper + lift on hover */
+.rounded { box-shadow:inset 0 1px 0 #ffffff, 0 1px 2px rgba(31,28,22,.05), 0 12px 24px -14px rgba(31,28,22,.18); transition:transform .16s cubic-bezier(.22,.8,.3,1), box-shadow .16s; }
+.rounded:hover { transform:translateY(-2px); box-shadow:inset 0 1px 0 #ffffff, 0 2px 3px rgba(31,28,22,.05), 0 20px 34px -16px rgba(31,28,22,.25); }
+button { cursor:pointer; }
+button:disabled { opacity:.55; cursor:default; transform:none !important; }
+/* v14 pin-mix additions */
+.step { position:relative; }
+.step .ghost { position:absolute; top:.1rem; right:.6rem; font-family:Fraunces,Georgia,serif; font-weight:600; font-size:3.4rem; line-height:1; color:transparent; -webkit-text-stroke:1.5px rgba(31,28,22,.14); pointer-events:none; }
+.hl { background:linear-gradient(0deg, rgba(196,52,29,.16), rgba(196,52,29,.16)); padding:0 .12em; border-radius:2px; }
+.hand { font-family:'Caveat',cursive; font-weight:700; color:#c4341d; }
+.cta-wrap { position:relative; display:inline-block; }
+.cta-note { position:absolute; left:calc(100% + .6rem); top:50%; transform:translateY(-50%) rotate(-4deg); white-space:nowrap; font-size:1.35rem; }
+.stamp { position:absolute; right:0; top:.2rem; transform:rotate(6deg); border:2px solid #1f1c16; border-radius:4px; padding:.35rem .6rem; font-family:'IBM Plex Mono',monospace; font-size:.6rem; letter-spacing:.14em; text-transform:uppercase; font-weight:600; color:#1f1c16; background:#fbf9f3; box-shadow:2px 3px 0 rgba(31,28,22,.15); text-align:center; line-height:1.5; }
+.stamp b { color:#c4341d; }
+.footer-band { background:#1f1c16; color:#f2efe7; margin-top:3rem; }
+.footer-band .word { font-family:Fraunces,Georgia,serif; font-weight:600; font-size:3rem; letter-spacing:-.02em; line-height:1; }
+.footer-band .rule { border-top:1px solid rgba(242,239,231,.25); }
+@media (max-width:640px){ .cta-note { position:static; display:inline-block; transform:rotate(-2deg); margin-left:.6rem; } .stamp { position:static; display:inline-block; margin-bottom:.8rem; } }
+
+
+@media (max-width:640px){ .step .ghost { font-size:2.2rem !important; } }
+
+/* Tailwind-CDN-independent utility fallbacks (layout must not depend on the CDN) */
+.block{display:block} .hidden{display:none} .grid{display:grid} .flex{display:flex} .flex-wrap{flex-wrap:wrap}
+.items-baseline{align-items:baseline} .items-center{align-items:center} .items-end{align-items:flex-end} .justify-between{justify-content:space-between}
+.gap-0{gap:0} .gap-2{gap:.5rem} .gap-3{gap:.75rem} .gap-4{gap:1rem}
+.p-2{padding:.5rem} .p-3{padding:.75rem} .p-4{padding:1rem} .p-7{padding:1.75rem}
+.px-5{padding-left:1.25rem;padding-right:1.25rem} .py-4{padding-top:1rem;padding-bottom:1rem} .py-8{padding-top:2rem;padding-bottom:2rem} .pt-3{padding-top:.75rem}
+.mt-1{margin-top:.25rem} .mt-2{margin-top:.5rem} .mt-3{margin-top:.75rem} .mt-4{margin-top:1rem} .mt-5{margin-top:1.25rem} .mt-6{margin-top:1.5rem} .mt-10{margin-top:2.5rem}
+.mb-1{margin-bottom:.25rem} .mb-2{margin-bottom:.5rem} .mb-3{margin-bottom:.75rem} .mb-4{margin-bottom:1rem}
+.ml-2{margin-left:.5rem} .ml-5{margin-left:1.25rem} .mr-3{margin-right:.75rem}
+.mx-auto{margin-left:auto;margin-right:auto} .my-2{margin-top:.5rem;margin-bottom:.5rem} .my-5{margin-top:1.25rem;margin-bottom:1.25rem}
+.space-y-1>*+*{margin-top:.25rem} .space-y-3>*+*{margin-top:.75rem} .space-y-4>*+*{margin-top:1rem}
+.text-xs{font-size:.75rem} .text-sm{font-size:.875rem} .text-lg{font-size:1.125rem} .text-2xl{font-size:1.5rem} .leading-none{line-height:1}
+.font-normal{font-weight:400} .font-medium{font-weight:500} .font-semibold{font-weight:600}
+.underline{text-decoration:underline} .text-right{text-align:right} .list-disc{list-style:disc} .cursor-pointer{cursor:pointer}
+.max-w-md{max-width:28rem} .max-w-2xl{max-width:42rem} .max-w-5xl{max-width:64rem} .w-full{width:100%}
+.min-h-screen{min-height:100vh} .max-h-40{max-height:10rem} .overflow-auto{overflow:auto} .rounded{border-radius:.25rem}
+@media (min-width:640px){ .sm\:grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))} .sm\:grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))} .sm\:p-6{padding:1.5rem} .sm\:px-6{padding-left:1.5rem;padding-right:1.5rem} }
+label.block>textarea.field, label.block>input.field, label.block>select.field{display:block;width:100%}
+
+ol.steps-row{list-style:none;padding-left:0;margin-left:0} ol.steps-row>li{list-style:none}
 </style>
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=20261113b"></script>
 </body>
 </html>
