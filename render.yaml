@@ -1,0 +1,19 @@
+# Render blueprint (free web service). The free tier has no persistent disk, so the
+# database is rebuilt and the fictional demo story is reloaded on every start.
+services:
+  - type: web
+    name: rebrand
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run.py
+    healthCheckPath: /api/health
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: REBRAND_AUTOSEED
+        value: "1"
+      - key: REBRAND_SCAN_HOURS
+        value: "24"
+      - key: REBRAND_DEMO_STORY
+        value: "1"

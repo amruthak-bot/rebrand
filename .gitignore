@@ -1,4 +1,18 @@
-__pycache__/
-.venv/
-data/
+# Local credentials and generated data
 .env
+.env.*
+!.env.example
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+data/
+uploads/
+*.db
+*.db-*
+*.sqlite*
+.modal/
+*.pem
+*.key
+.DS_Store

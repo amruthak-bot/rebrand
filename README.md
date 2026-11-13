@@ -1,36 +1,6 @@
-# ReBrand - AI-Powered Brand Damage Recovery System
+# ReBrand: Brand Damage Recovery System
 
-## Shorter review flow and input fixes (6 November 2026)
-
-Live demo: https://rebrand.onrender.com
-
-The everyday flow is **Write -> Check -> human approval -> Mark as published**.
-Checking opens that post's results immediately and includes older-post suggestions.
-Edits use one **Save and recheck** button. Approval keeps the post open with its
-next action; the optional publication URL is entered inline. Only actions allowed
-for the role and current state are shown. Optional upload/channel fields are
-collapsed, image descriptions appear for images, and changing a draft clears
-its old results. Unsaved edits disable approval until a fresh scan.
-
-Input fixes: empty text and images without files now produce blocking findings;
-DOCX uses standard-library XML extraction; banned terms match whole terms; an
-approved claim cannot excuse a different superlative in the same sentence.
-Unapproved percentages produce an advisory, Uncertain claim warning. This is a
-heuristic for human review, not general numerical fact-checking.
-
-Verified locally on the updated code with the original tests unchanged:
-
-```text
-ALL 32 CHECKS PASSED
-PASS: expired claims rejected; current claims allowed
-PASS: whole terms, independent claims, percentage review, DOCX extraction and missing-content guards
-```
-
-Run the added regression check with `python tests/test_regressions.py`.
-Human approval, fresh-scan checks and manual external publishing remain required.
-The sections below describe the supplied Round 2 build and its earlier history.
-
-CodeNexus India 2026, Round 2 build. Problem statement by Inkloom AI: intelligent
+CodeNexus India 2026, Round 3 (final) build. Problem statement by Inkloom AI: intelligent
 brand-governance platform. Team: RASHI INNOVATORS (Amrutha K - team leader; Akshay Kammar).
 
 ReBrand checks content **before publication** against an organisation's own brand
@@ -41,28 +11,40 @@ items and **recovers damage**: when a guideline changes or a claim expires, affe
 live items are re-checked, damaged ones become tracked recovery tasks, and every
 corrective action requires human approval before closure.
 
-## Interface (redesigned 6 November — simple, calm, human)
+## Interface (current design, 13 November - simple, calm, human)
 
 The backend and API are unchanged; only the words, colours and layout changed.
 No feature was added or removed in this redesign.
 
-- **One job per screen.** Sign-in opens straight on "Write a new post". Every
+- **One job per screen.** Sign-in opens on the "What's new in Round 3" guide, and "Write a new post" is one click away. Every
   screen has one main button, in plain words ("Check my post", "Approve",
   "Mark as published"). Sections are named for what they are: Brand rules,
   New post, Review, Live posts, Posts to fix, Simple numbers.
-- **Plain words, not jargon.** Issues say "Stop — fix this first",
+- **Plain words, not jargon.** Issues say "Stop: fix this first",
   "Check this" or "Small fix" instead of severity codes, and every flag says
   what was found, why it matters, and how to fix it. Empty screens explain
   what will appear there, instead of showing a blank list.
 - **Colours chosen for stressed people doing careful work.** Brand and social
   teams check posts under time pressure, so the interface is calm first:
   warm paper background (#F6F1E7, like a printed page, easy on the eyes),
-  deep green (#17573F) for trust, safety and "go" — the colour of approval —
-  warm amber (#B7791F) for "look at this", and a muted brick red (#B3402E)
-  used only for "stop". No blue/purple gradients, no glass panels, no
-  generic AI look. Headings are a warm serif (Fraunces); body text is a
-  plain sans-serif. Green means safe, amber means check, red means stop —
-  the same meaning everywhere in the app, so a new user learns it once.
+  signal red (#C4341D) reserved for risk and primary actions,
+  warm amber (#B7791F) for "look at this". No blue/purple gradients, no
+  glass panels, no generic AI look. Headings are a warm serif (Fraunces
+  italic for the accent line); body text is Space Grotesk; small-caps
+  labels are IBM Plex Mono. Red means stop or act, amber means check. The
+  same meaning everywhere in the app, so a new user learns it once.
+  (Earlier November builds used a green/amber palette; the 13 November
+  editorial redesign superseded it. Layout and wording principles are
+  unchanged.)
+- **Hand-finished details (13 November, final polish).** Numbered outline
+  numerals sit behind the three steps, a rotated "CodeNexus Round 3 final"
+  stamp marks the hero, a hand-drawn red arrow with a handwritten "start
+  here" note points at the first action, a marker highlight underlines one
+  key word on the sign-in screen, and an ink footer band closes each page
+  with the wordmark and the team line. Small screens get the same design
+  with adjusted sizes. All layout CSS is self-hosted in the page, so the
+  interface renders identically even if the optional icon/font CDNs are
+  unreachable.
 
 ## Design principles (from the Round 1 plan)
 
@@ -103,7 +85,7 @@ Demo logins (local demo only):
 
 ```bash
 python run.py &          # server on :8000
-python tests/test_e2e.py # 32 checks: full workflow, both content types
+python tests/test_e2e.py # 34 checks: full workflow, both content types
 ```
 
 The test walks the whole product: submit off-brand text, deterministic flags with
@@ -152,8 +134,9 @@ change writes an audit event. No component trains on organisation data.
 
 ## Known limits (MVP honesty)
 
-- OCR for text inside images is planned (Tesseract) but not wired; image text
-  checks currently apply to supplied alt text and metadata only.
+- OCR (RapidOCR) reads text inside image posts and runs the same rules on it.
+  Accuracy on real-world photos and stylised text is not benchmarked; findings
+  go to a human like every other check.
 - AI tone check requires the operator to supply a model key via environment
   variables; without it, tone review is routed to humans as Uncertain.
 - Auth is demo-grade role-based access, not SSO.
@@ -165,13 +148,87 @@ change writes an audit event. No component trains on organisation data.
 - Expired approved claims are flagged at initial submission.
 - Recovery correction requires a human's written confirmation of the external change; closure remains reviewer-only with recheck. This is **manual confirmation**, not automated verification of a live website.
 - Schema upgrades are applied to existing SQLite databases.
-- The uploaded source bundle did **not** contain the original `static/app.js`; this package includes a replacement JavaScript frontend. Browser walkthrough is still required before claiming full UI verification.
+- The uploaded source bundle did **not** contain the original `static/app.js`; this package includes a replacement JavaScript frontend. Browser walkthrough of the live deployment was completed on 12 November.
 
 ## Previous Post Memory Check (Round 2 small addition)
 On **Submit content**, choose **Compare with previous posts**. The feature compares the draft with up to 150 published items in the same workspace, shows up to three related posts with dates, and highlights possible numerical differences. It does not scrape external sites or claim a previous figure is false; a human must verify. This is an advisory check, not an approval bypass.
 
 ## Final Round 2 build
 - Includes the Previous Post Memory Check on the Submit content screen.
-- Fresh-install verification: 32/32 end-to-end API checks, expired-claim safety check, and JavaScript syntax check passed.
-- This is a local runnable build; public hosting and full browser interactions have not been independently verified.
+- Fresh-install verification: end-to-end API checks, expired-claim safety check, and JavaScript syntax check passed (superseded by the Round 3 suites below).
+- Public hosting (Modal) and full browser interactions were verified on 12 November.
 - For production hosting, configure persistent storage and production authentication; the seeded accounts are demo-only.
+
+## Round 3 additions (9 November 2026)
+
+- Impact preview: `POST /api/blueprint/preview` and the "Preview the impact first" button show which live posts would newly fail before a rules version is saved. Nothing is saved.
+- Claim expiry and renewal: `GET /api/claims/expiry`, `POST /api/claims/expiry/scan` (notices + recovery for expired claims), `POST /api/claims/renew` (needs an evidence note, creates a new rules version). UI: "Plan ahead" tab. The scan runs on demand and on an in-process timer (`REBRAND_SCAN_HOURS`, 24 in the deploy configs).
+- Dispute learning: `GET /api/guideline-suggestions` aggregates dispute reasons per rule and drafts clearer wording; `POST /api/guideline-suggestions/approve` saves it only after a manager or reviewer approves. The wording is template-based, not AI-generated.
+- Tests: `python tests/test_round3.py` (fresh seeded db), plus the unchanged e2e and safety tests.
+- Demo story: `POST /api/demo/load` (or the button in Plan ahead) adds fictional data: 3 live posts, 1 fix task opened by a guideline change, a claim expiring in 12 days, 2 disputes. Set `REBRAND_AUTOSEED=1` and `REBRAND_DEMO_STORY=1` (see `render.yaml`) so a fresh deploy seeds itself, which fixes the "data disappears after redeploy" problem on a free host without a disk. Tests: `tests/test_demo_story.py`.
+- Judge quick-start buttons on the sign-in page and a "Fill in a sample off-brand post" button in New post.
+- Optional Puter AI tone review (button in Review, "Optional: AI tone review (Puter)"): runs in the browser on the signed-in person's own Puter account (user-pays, no key on our side). The server accepts the findings via `POST /api/submissions/{id}/ai-tone`, drops any whose evidence is not quoted from the draft, marks findings without a guideline quote as Uncertain, and keeps them medium severity so a human still decides. The core app, storage and approval gate stay on the server and work without Puter.
+- OCR for image posts (optional): `pip install -r requirements-ocr.txt` adds RapidOCR (PaddleOCR models on ONNX Runtime, CPU only). Words read from an image go through the same terminology and claim rules, with evidence marked "Text read from the image (OCR)". Without the package, image checks run as before. Test: `tests/test_ocr.py`.
+- Deployment: the app runs on Modal (`modal_app.py`) as one always-warm container (no cold start for judges) with data on a persistent Modal Volume, auto-seed and demo story on start. Live demo: https://akshaykammar31--rebrand-web.us-east.modal.run . `render.yaml` remains as a free fallback.
+
+## Round 3 final additions (12 November 2026)
+
+- "What's new in Round 3" tab: a judge-facing guide mapping each promised improvement to where to try it.
+- "Activity" tab: the audit trail (`GET /api/audit`) rendered in the UI - every check, approval, publication and fix with who did it and when. Test: `tests/test_activity.py`.
+- Hardening against judge-style abuse (`tests/test_hardening.py`): an empty post is now flagged as a high-priority issue and cannot be approved; double approval and double publishing are rejected; unauthenticated calls return 401; a 200KB post checks without a crash.
+- Deploy fix: the Modal image now installs the system libraries OpenCV needs, so OCR works in the deployed build (verified against the live deployment).
+
+## Round 3 hardening pass (late 12 November 2026)
+
+A full line-by-line code audit found and fixed six defects, each with a regression test in
+`tests/test_v9.py`:
+
+- **Preview before save.** `POST /api/blueprint` now refuses a rules version that was not
+  previewed first (409); the UI's Save button runs the preview automatically.
+- **Transactional blueprint saves.** A failed save leaves nothing behind (before, a rejected
+  save could be half-committed by a later, unrelated request), and the recovery tasks opened
+  by a rule change are committed in the same request (before, a restart could lose them).
+- **Input validation.** Bad brand colours, bad claim dates and bad risk values are readable
+  400s instead of 500s that broke image checks and the Plan ahead tab.
+- **Publish against current rules.** Publishing is refused if the rules changed since
+  approval, and the live link must be an http(s) URL.
+- **Sessions.** Sign-out now revokes the token (`POST /api/logout`), and the browser stays
+  signed in across a refresh.
+- **Uploads.** Files are size-capped (20 MB, 413 above) and validated before anything is
+  written to disk. DOCX import now uses python-docx (the old path returned raw bytes).
+- Multi-statement approve/publish/save paths are serialised with a lock.
+
+## Interface redesign (13 November 2026)
+
+The whole interface was redesigned in a custom editorial style: warm paper canvas, ink type
+(Space Grotesk with a Fraunces-italic accent), one signal red reserved for risk and primary
+actions, mono small-caps labels, hairline rules instead of pastel cards, and squared plates.
+No feature, wording or workflow changed; every screen was re-screenshotted on a running
+instance (desktop and mobile).
+
+## Second hardening pass (late 12 November 2026, "360 check")
+
+A second full-angle review found and fixed eight more issues, each with a regression test
+in `tests/test_v10.py`:
+
+- **Decision state gate.** "Ask for changes" / "Reject" now only work on in-review content;
+  before, they could flip a *published* item back to Draft while the public register still
+  showed it live.
+- **Dispute gate.** Only open or accepted flags can be disputed; before, disputing an already
+  resolved flag quietly re-blocked approval.
+- **Defensive approval check.** Approving with no blueprint saved is a readable 400, not a 500.
+- **Login throttle.** Eight failed sign-ins for one email pause that email for five minutes (429).
+- **Security headers** on every response: X-Content-Type-Options, X-Frame-Options, Referrer-Policy.
+- **Text caps.** Post titles (300), post text (500k characters), alt text and comments are capped
+  with readable 400s; bad content types are rejected.
+- **Empty reasons refused.** Reporting a live post or commenting now requires actual text.
+- **Double-click proof UI.** Every button action is guarded while one is already running, so a
+  fast double-click can never fire the same mutation twice.
+
+## Roadmap (post-hackathon)
+
+- Real authentication (SSO / per-organisation accounts) replacing the demo logins.
+- PostgreSQL and managed object storage for production durability.
+- Genuine monitoring of live URLs (fetch and re-check the real page) instead of registered metadata.
+- Benchmarked OCR and a benchmarked AI tone layer behind an operator key.
+- Accessibility audit and multi-browser testing.
